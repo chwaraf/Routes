@@ -146,38 +146,101 @@ end
 -- Try to populate the hidden tooltip with the item, using whichever method
 -- this client generation provides. Each attempt is verified to actually
 -- produce lines before it is accepted. Returns true on success.
+-- Is this item known to this client's item database?
+local function ItemKnown(itemID)
+	if C_Item and C_Item.GetItemInfo then
+		return C_Item.GetItemInfo(itemID) ~= nil
+	end
+	if GetItemInfo then
+		return GetItemInfo(itemID) ~= nil
+	end
+	return false
+end
+
+-- One-shot compact diagnostic, printed when no populate strategy works for
+-- a known item. Paste this line back to the addon maintainer and the client
+-- API surface is identified without any further guessing.
+local diagnosed = false
+local function DiagnoseFailure(itemID)
+	if diagnosed then return end
+	diagnosed = true
+	local function yn(v) return v and "yes" or "no" end
+	local CTI = C_TooltipInfo or {}
+	local CI = C_Item or {}
+	local hasTextLeft = (tt.TextLeft1 ~= nil or _G[tt:GetName().."TextLeft1"] ~= nil)
+	Routes:Print(("skill-suffix unavailable: frame{{SetItemByID=%s ProcessInfo=%s AddItem=%s SetHyperlink=%s NumLines=%s GetNumLines=%s TextLeft1=%s}} api{{C_TooltipInfo=%s ByLocation=%s ByID=%s C_Item=%s GetItemLocation=%s GetItemLink=%s GetItemLink-global=%s SetItemTooltip-global=%s}} item %d known=%s"):format(
+		yn(tt.SetItemByID ~= nil), yn(tt.ProcessInfo ~= nil), yn(tt.AddItem ~= nil),
+		yn(tt.SetHyperlink ~= nil), yn(tt.NumLines ~= nil), yn(tt.GetNumLines ~= nil), yn(hasTextLeft),
+		yn(C_TooltipInfo ~= nil), yn(CTI.GetItemByLocation ~= nil), yn(CTI.GetItemByID ~= nil),
+		yn(C_Item ~= nil), yn(CI.GetItemLocation ~= nil), yn(CI.GetItemLink ~= nil),
+		yn(GetItemLink ~= nil), yn(type(GameTooltip_SetItemTooltip) == "function"),
+		itemID, yn(ItemKnown(itemID))))
+end
+
+-- Try to populate the hidden tooltip with the item, using whichever method
+-- this client generation provides. Each attempt is verified to actually
+-- produce lines before it is accepted. Returns true on success. Classic
+-- helpers are wrapped in pcall: on some clients they exist but misbehave.
 local function PopulateItemTooltip(itemID)
 	tt:Hide()
+	local success = false
 
 	if tt.SetItemByID then
-		tt:SetItemByID(itemID)
-		if TooltipLineCount() > 0 then return true end
-	end
-
-	if tt.ProcessInfo then
-		local info = ItemTooltipInfo(itemID)
-		if info then
-			tt:ProcessInfo(info)
-			if TooltipLineCount() > 0 then return true end
+		local ok, err = pcall(tt.SetItemByID, tt, itemID)
+		if ok then
+			success = TooltipLineCount() > 0
 		end
 	end
 
-	if tt.AddItem then
-		tt:AddItem(itemID)
-		if TooltipLineCount() > 0 then return true end
+	if not success and tt.ProcessInfo then
+		local info = ItemTooltipInfo(itemID)
+		if info then
+			local ok = pcall(tt.ProcessInfo, tt, info)
+			if ok then
+				success = TooltipLineCount() > 0
+			end
+		end
 	end
 
-	if tt.SetHyperlink then
-		tt:SetHyperlink(ItemLinkForID(itemID))
-		if TooltipLineCount() > 0 then return true end
-	elseif type(GameTooltip_SetHyperlink) == "function" then
+	if not success and tt.AddItem then
+		local ok = pcall(tt.AddItem, tt, itemID)
+		if ok then
+			success = TooltipLineCount() > 0
+		end
+	end
+
+	if not success then
+		local link = ItemLinkForID(itemID)
+		if tt.SetHyperlink then
+			local ok = pcall(tt.SetHyperlink, tt, link)
+			if ok then
+				success = TooltipLineCount() > 0
+			end
+		end
 		-- Classic-era fallback: the 1.15 global helper that populates a
 		-- custom GameTooltip frame (frame method not available)
-		GameTooltip_SetHyperlink(tt, ItemLinkForID(itemID))
-		if TooltipLineCount() > 0 then return true end
+		if not success and type(GameTooltip_SetHyperlink) == "function" then
+			local ok = pcall(GameTooltip_SetHyperlink, tt, link)
+			if ok then
+				success = TooltipLineCount() > 0
+			end
+		end
+		-- Classic-era item helper (1.15 GameTooltip_SetItemTooltip)
+		if not success and type(GameTooltip_SetItemTooltip) == "function" then
+			local ok = pcall(GameTooltip_SetItemTooltip, tt, itemID)
+			if ok then
+				success = TooltipLineCount() > 0
+			end
+		end
 	end
 
-	return false
+	tt:Hide()
+
+	if not success and ItemKnown(itemID) then
+		DiagnoseFailure(itemID)
+	end
+
+	return success
 end
 
 -- Does this tooltip line mention the profession? The line carries the
