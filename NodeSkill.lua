@@ -56,14 +56,30 @@ tt:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", -2000, -2000)
 
 -- Number of populated lines (NumLines() exists on both tooltip systems;
 -- GetNumLines() is the newer alias, kept as a fallback).
+-- Number of lines the hidden tooltip currently shows. Modern frames expose
+-- NumLines()/GetNumLines(); classic-era frames often expose neither, so as a
+-- last resort scan the TextLeftN font strings directly. Item tooltips can
+-- contain empty separator lines, so the count is the highest non-empty line.
 local function TooltipLineCount()
 	if tt.NumLines then
-		return tt:NumLines()
+		local n = tt:NumLines()
+		if n and n > 0 then return n end
 	end
 	if tt.GetNumLines then
-		return tt:GetNumLines()
+		local n = tt:GetNumLines()
+		if n and n > 0 then return n end
 	end
-	return 0
+	local count = 0
+	for i = 1, 30 do
+		local fs = tt["TextLeft"..i] or _G[tt:GetName().."TextLeft"..i]
+		if fs and fs.GetText then
+			local text = fs:GetText()
+			if text and text ~= "" then
+				count = i
+			end
+		end
+	end
+	return count
 end
 
 -- Text of the left column of a line. Both systems store lines in the
@@ -153,6 +169,11 @@ local function PopulateItemTooltip(itemID)
 
 	if tt.SetHyperlink then
 		tt:SetHyperlink(ItemLinkForID(itemID))
+		if TooltipLineCount() > 0 then return true end
+	elseif type(GameTooltip_SetHyperlink) == "function" then
+		-- Classic-era fallback: the 1.15 global helper that populates a
+		-- custom GameTooltip frame (frame method not available)
+		GameTooltip_SetHyperlink(tt, ItemLinkForID(itemID))
 		if TooltipLineCount() > 0 then return true end
 	end
 
