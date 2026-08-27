@@ -192,6 +192,8 @@ L["Cluster this route"] = true
 L["Cluster this route in the background"] = true
 L["Background Route Clustering completed."] = true
 L["Now running route clustering in the background..."] = true
+L["Route Clustering completed."] = true
+L["Now clustering the route; the game stays responsive while it runs..."] = true
 L["Uncluster"] = true
 L["Uncluster this route"] = true
 

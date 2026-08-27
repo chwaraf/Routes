@@ -1829,11 +1829,12 @@ function ConfigHandler:ClusterRoute(info)
 	-- Chunked via the same coroutine machinery as the Background button:
 	-- the synchronous O(n^2) clustering pass on a big route outruns the UI
 	-- watchdog ("script ran too long") on some clients, while the chunked
-	-- run never can.
-	ConfigHandler:ClusterRouteBackground(info)
+	-- run never can. `true` marks it as a foreground run so the chat
+	-- messages match the button that was actually clicked.
+	ConfigHandler:ClusterRouteBackground(info, true)
 end
 
-function ConfigHandler:ClusterRouteBackground(info)
+function ConfigHandler:ClusterRouteBackground(info, foreground)
 	local zone = tonumber(info[2])
 	local route = Routes.routekeys[zone][ info[3] ]
 	local t = db.routes[zone][route]
@@ -1842,7 +1843,8 @@ function ConfigHandler:ClusterRouteBackground(info)
 		t.route, t.metadata, t.length = route, metadata, length
 
 		t.cluster_dist = db.defaults.cluster_dist
-		Routes:Print(L["Background Route Clustering completed."])
+		Routes:Print(foreground and L["Route Clustering completed."]
+			or L["Background Route Clustering completed."])
 
 		-- redraw lines
 		local AutoShow = Routes:GetModule("AutoShow", true)
@@ -1855,7 +1857,8 @@ function ConfigHandler:ClusterRouteBackground(info)
 		LibStub("AceConfigRegistry-3.0"):NotifyChange("Routes")
 	end
 
-	Routes:Print(L["Now running route clustering in the background..."])
+	Routes:Print(foreground and L["Now clustering the route; the game stays responsive while it runs..."]
+		or L["Now running route clustering in the background..."])
 	Routes.TSP:ClusterRouteBackground(db.routes[zone][route].route, zone, db.defaults.cluster_dist, callbackClusterFinished)
 end
 
