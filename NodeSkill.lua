@@ -667,6 +667,25 @@ function Routes:NodeSkillDebug(itemID)
 			Routes:Print(("    line %d: [%s]"):format(i, tostring(TooltipLineText(i))))
 		end
 	end
+
+	-- Final line: which API found the rank (or NOT FOUND). Placed at the very
+	-- end of the output on purpose -- this is the line that matters, and chat
+	-- pastes tend to include the tail.
+	local function RankSource(prof)
+		local target = profName[prof]
+		if not target then return nil, "no name" end
+		local r = RankFromPrimaryProfessions(target)
+		if r then return r, "GetPrimaryProfessionInfo" end
+		r = RankFromProfessions(target)
+		if r then return r, "GetProfessionInfo" end
+		r = RankFromSkillLines(target)
+		if r then return r, "GetSkillLineInfo" end
+		return nil, "NOT FOUND"
+	end
+	local hRank, hSrc = RankSource("Herbalism")
+	local mRank, mSrc = RankSource("Mining")
+	Routes:Print(("=== SKILL RESULT: Herbalism=%s [%s]  Mining=%s [%s]  (paste THIS line)"):format(
+		tostring(hRank), tostring(hSrc), tostring(mRank), tostring(mSrc)))
 end
 
 -- vim: ts=4 noexpandtab
