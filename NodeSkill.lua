@@ -39,11 +39,70 @@ local function RefreshProfNames()
 end
 
 -- Hidden tooltip used to read the requirement line. Frame level 0 keeps it
--- behind the UI (invisible) while AddItem() is populating it.
+-- behind the UI (invisible) while it is being populated.
 local tt = CreateFrame("GameTooltip", "RoutesNodeSkillTooltip", nil, "GameTooltipTemplate")
 tt:SetFrameLevel(0)
 tt:ClearAllPoints()
 tt:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", -2000, -2000)
+
+-- Populate the hidden tooltip with the item.
+-- The reworked clients (retail 10.0.2+ and the modernized classics such as
+-- the recent Classic Era / TBC Anniversary) removed the classic AddItem()
+-- method from GameTooltipTemplate frames; those populate via SetItemByID()
+-- or SetHyperlink(). Older retail still has AddItem(). Try each in turn.
+local function PopulateItemTooltip(itemID)
+	tt:Hide()
+	if tt.SetItemByID then
+		tt:SetItemByID(itemID)
+		return true
+	end
+	if tt.AddItem then
+		tt:AddItem(itemID)
+		return true
+	end
+	if tt.SetHyperlink then
+		local link
+		if C_Item and C_Item.GetItemLink then
+			link = C_Item.GetItemLink(itemID)
+		elseif GetItemLink then
+			link = GetItemLink(itemID)
+		end
+		if not link then
+			link = ("item:%d:0:0:0:0:0:0:0:0:0:0"):format(itemID)
+		end
+		tt:SetHyperlink(link)
+		return true
+	end
+	return false
+end
+
+-- Number of populated lines (NumLines() exists on both tooltip systems;
+-- GetNumLines() is the newer alias, kept as a fallback).
+local function TooltipLineCount()
+	if tt.NumLines then
+		return tt:NumLines()
+	end
+	if tt.GetNumLines then
+		return tt:GetNumLines()
+	end
+	return 0
+end
+
+-- Text of the left column of a line. Both systems store lines in the
+-- frame's TextLeftN font objects; GetText(line, subline) is the newer alias.
+local function TooltipLineText(i)
+	local left = tt["TextLeft"..i]
+	if not left then
+		left = _G[tt:GetName().."TextLeft"..i]
+	end
+	if left and left.GetText then
+		return left:GetText()
+	end
+	if tt.GetText then
+		return tt:GetText(i, 1)
+	end
+	return nil
+end
 
 -- itemID .. ":" .. prof -> { req = number, line = string } or false (no
 -- requirement line). The item's tooltip only carries the requirement for the
@@ -59,20 +118,20 @@ local function NodeRequiredSkill(itemID, prof)
 		return nil
 	end
 	local req, line = nil, nil
-	tt:Hide()
-	tt:AddItem(itemID)
-	RefreshProfNames()
-	local name = profName[prof]
-	if name then
-		for i = 1, tt:GetNumLines() do
-			local text = tt:GetText(i, 1)
-			if text and text:find(name, 1, true) then
-				-- "Requires <[Expansion] >Herbalism/Mining (N)"
-				local num = text:match("(%d+)%)%s*$")
-				if num then
-					req = tonumber(num)
-					line = text
-					break
+	if PopulateItemTooltip(itemID) then
+		RefreshProfNames()
+		local name = profName[prof]
+		if name then
+			for i = 1, TooltipLineCount() do
+				local text = TooltipLineText(i)
+				if text and text:find(name, 1, true) then
+					-- "Requires <[Expansion] >Herbalism/Mining (N)"
+					local num = text:match("(%d+)%)%s*$")
+					if num then
+						req = tonumber(num)
+						line = text
+						break
+					end
 				end
 			end
 		end
