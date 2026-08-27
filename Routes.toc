@@ -62,7 +62,6 @@ Locales\Locale-zhTW.lua
 Routes.lua
 Routes.xml
 TSP.lua
-NodeSkill.lua
 
 # Routes Module files
 Modules\AutoShow.lua

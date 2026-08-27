@@ -1,4 +1,4 @@
---[[
+﻿--[[
 ********************************************************************************
 Routes
 @project-version@
@@ -63,7 +63,6 @@ Contact:
 Routes = LibStub("AceAddon-3.0"):NewAddon("Routes", "AceConsole-3.0", "AceEvent-3.0", "AceHook-3.0")
 local Routes = Routes
 local L   = LibStub("AceLocale-3.0"):GetLocale("Routes", false)
-Routes.L = L -- used by the error handlers in TSP.lua
 local G = {} -- was Graph-1.0, but we removed the dependency
 Routes.G = G
 Routes.Dragons = LibStub("HereBeDragons-2.0")
@@ -121,10 +120,6 @@ local defaults = {
 			draw_battlemap  = true,
 			draw_indoors    = false,
 			tsp = {
-				algorithm          = "lk",  -- Solver: "lk", "ils" or "aco". See TSP.lua.
-				ils_effort         = 3,     -- lk/ils: 1-10, how long to keep improving the route
-				annealing          = true,  -- lk/ils: accept uphill moves on a cooling schedule
-				-- The rest are ACO only, and are ignored by the local search solvers
 				initial_pheromone  = 0.1,   -- Initial pheromone trail value
 				alpha              = 1,     -- Likelihood of ants to follow pheromone trails (larger value == more likely)
 				beta               = 6,     -- Likelihood of ants to choose closer nodes (larger value == more likely)
@@ -212,31 +207,6 @@ end
 Routes.GetZoneName = GetZoneName
 
 Routes.LZName = setmetatable({}, { __index = function() return 0 end})
-
--- Return the localized zone name for a uiMapID, but only if routes can
--- actually be stored for it (i.e. it made it into LZName).
-local function ZoneNameForMap(mapID)
-	if not mapID then return nil end
-	local name = GetZoneName(mapID)
-	if name and Routes.LZName[name] then return name end
-	return nil
-end
-
--- The zone the player is currently standing in, for use as the default zone
--- when creating routes and taboo regions. If the player is inside a dungeon
--- or micro dungeon, the containing overworld zone is used instead, since
--- gathering routes live in the open world.
-local function GetPlayerRouteZone()
-	local mapID = Routes.Dragons:GetPlayerZone()
-	if mapID then
-		local data = Routes.Dragons.mapData and Routes.Dragons.mapData[mapID]
-		if data and Enum and Enum.UIMapType
-			and (data.mapType == Enum.UIMapType.Dungeon or data.mapType == Enum.UIMapType.Micro) then
-			mapID = data.parent
-		end
-	end
-	return ZoneNameForMap(mapID)
-end
 
 local COSMIC_MAP_ID = 946
 local WORLD_MAP_ID = 947
@@ -1014,14 +984,6 @@ local function ChatCommand(input)
 	if not input or input:trim() == "" then
 		LibStub("AceConfigDialog-3.0"):Open("Routes")
 	else
-		-- /routes skilldebug [itemID] - report node skill lookup diagnostics
-		local cmd = input:trim():lower()
-		if cmd == "skilldebug" or cmd:find("^skilldebug%s") then
-			if Routes.NodeSkillDebug then
-				Routes:NodeSkillDebug(tonumber(cmd:match("^skilldebug%s+(%d+)$")))
-			end
-			return
-		end
 		LibStub("AceConfigCmd-3.0").HandleCommand(Routes, "routes", "Routes", input)
 	end
 end
@@ -2031,43 +1993,13 @@ function ConfigHandler:SetTwoPointFiveOpt(info, v)
 	db.defaults.tsp.two_point_five_opt = v
 end
 
-function ConfigHandler:GetAlgorithm()
-	return db.defaults.tsp.algorithm
-end
-function ConfigHandler:SetAlgorithm(info, v)
-	db.defaults.tsp.algorithm = v
-end
-function ConfigHandler:GetIlsEffort()
-	return db.defaults.tsp.ils_effort
-end
-function ConfigHandler:SetIlsEffort(info, v)
-	db.defaults.tsp.ils_effort = v
-end
-function ConfigHandler:GetAnnealing()
-	return db.defaults.tsp.annealing
-end
-function ConfigHandler:SetAnnealing(info, v)
-	db.defaults.tsp.annealing = v
-end
--- The ACO solver builds an NxN matrix and so has a hard node ceiling; the local
--- search solvers keep k neighbours per node and do not. Both the 2.5-opt toggle
--- and the ceiling therefore only apply while ACO is selected.
-function ConfigHandler:IsNotACO()
-	return db.defaults.tsp.algorithm ~= "aco"
-end
--- Effort and annealing belong to the local search solvers, not to ACO
-function ConfigHandler:IsACO()
-	return db.defaults.tsp.algorithm == "aco"
-end
-
 function ConfigHandler:DoForeground(info)
 	local zone = tonumber(info[2])
 	local route = Routes.routekeys[zone][ info[3] ]
 	local t = db.routes[zone][route]
-	if db.defaults.tsp.algorithm == "aco" and #t.route > 724 then
+	if #t.route > 724 then
 		-- Lua has 4mb limit on table size. 725x725 will result in a table of size 525625
 		-- 524288 (or 2^19) is the max as 8 bytes per entry will give exactly 4 Mb
-		-- The local search solvers have no NxN matrix, so this limit does not apply to them.
 		Routes:Print(L["TOO_MANY_NODES_ERROR"])
 		return
 	end
@@ -2096,8 +2028,7 @@ function ConfigHandler:DoBackground(info)
 	local zone = tonumber(info[2])
 	local route = Routes.routekeys[zone][ info[3] ]
 	local t = db.routes[zone][route]
-	if db.defaults.tsp.algorithm == "aco" and #t.route > 724 then
-		-- ACO only; see the note in DoForeground()
+	if #t.route > 724 then
 		Routes:Print(L["TOO_MANY_NODES_ERROR"])
 		return
 	end
@@ -2391,55 +2322,11 @@ do
 						name = L["Route Optimizing"],
 						order = 100,
 					},
-					algorithm_group = {
-						type = "group",
-						order = 110,
-						name = L["Algorithm"],
-						inline = true,
-						args = {
-							algorithm_disc = {
-								name = L["AlgorithmDesc"], type = "description",
-								order = 0,
-							},
-							algorithm = {
-								name = L["Algorithm"], type = "select",
-								desc = L["AlgorithmDesc"],
-								values = {
-									lk = L["Lin-Kernighan"],
-									ils = L["2-opt / Or-opt"],
-									aco = L["Ant Colony (legacy)"],
-								},
-								sorting = { "lk", "ils", "aco" },
-								get = "GetAlgorithm", set = "SetAlgorithm",
-								disabled = false, -- to avoid inheriting from parent, so we don't have to use an arg= field
-								order = 100,
-							},
-							ils_effort = {
-								name = L["Optimization effort"], type = "range",
-								desc = L["EffortDesc"],
-								min = 1, max = 10, step = 1,
-								get = "GetIlsEffort", set = "SetIlsEffort",
-								hidden = "IsACO",
-								disabled = false,
-								order = 200,
-							},
-							annealing = {
-								name = L["Simulated annealing"], type = "toggle",
-								desc = L["AnnealingDesc"],
-								get = "GetAnnealing", set = "SetAnnealing",
-								hidden = "IsACO",
-								disabled = false,
-								width = "full",
-								order = 300,
-							},
-						},
-					},
 					two_point_five_group = {
 						type = "group",
 						order = 150,
 						name = L["Extra optimization"],
 						inline = true,
-						hidden = "IsNotACO", -- ILS gets this from Or-opt already
 						args = {
 							two_point_five_opt_disc = {
 								name = L["ExtraOptDesc"], type = "description",
@@ -2675,16 +2562,10 @@ do
 			end,
 			get = function()
 				if create_zone then return create_zone end
-				-- Auto-detect the zone to use: prefer the zone the player is
-				-- currently standing in, so the dropdown matches where we are.
-				-- Fall back to the map currently viewed on the world map (on
-				-- clients where GetMapID() returns a uiMapID).
-				local name = GetPlayerRouteZone()
-				if not name and WoW90 then
-					name = ZoneNameForMap(WorldMapFrame and WorldMapFrame.GetMapID and WorldMapFrame:GetMapID())
-				end
-				if not name then return nil end
-				create_zone = name
+				-- Use currently viewed map on first view.
+				local mapID = WorldMapFrame:GetMapID()
+				if not mapID then return nil end
+				create_zone = GetZoneName(mapID)
 				return create_zone
 			end,
 			set = function(info, key) create_zone = key end,
@@ -3523,14 +3404,10 @@ do
 			end,
 			get = function()
 				if create_zone then return create_zone end
-				-- Same auto-detection as for routes: use the zone the player is
-				-- currently standing in, falling back to the viewed world map.
-				local name = GetPlayerRouteZone()
-				if not name and WoW90 then
-					name = ZoneNameForMap(WorldMapFrame and WorldMapFrame.GetMapID and WorldMapFrame:GetMapID())
-				end
-				if not name then return nil end
-				create_zone = name
+				-- Use currently viewed map on first view.
+				local mapID = WorldMapFrame:GetMapID()
+				if not mapID then return nil end
+				create_zone = GetZoneName(mapID)
 				return create_zone
 			end,
 			set = function(info, key) create_zone = key end,

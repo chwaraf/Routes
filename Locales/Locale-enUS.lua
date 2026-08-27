@@ -158,15 +158,6 @@ L["Reset the line settings to defaults"] = true
 
 L["Optimize Route"] = true
 L["Route Optimizing"] = true
-L["Algorithm"] = true
-L["AlgorithmDesc"] = "Which optimizer to use. Lin-Kernighan produces the shortest routes and is the recommended setting. 2-opt / Or-opt is a simpler local search that converges a little faster on small routes. Both are far faster than Ant Colony and have no node limit; Ant Colony is the original optimizer, kept for comparison."
-L["Lin-Kernighan"] = true
-L["2-opt / Or-opt"] = true
-L["Ant Colony (legacy)"] = true
-L["Optimization effort"] = true
-L["Simulated annealing"] = true
-L["AnnealingDesc"] = "Lets the optimizer accept a slightly worse route now and then, less and less often as it runs, so it can climb out of a dead end instead of polishing one. It never returns a worse route than it would have without this, since the best route found is always kept. Recommended setting is ON."
-L["EffortDesc"] = "How long to keep improving the route. Higher values search longer for a shorter route, with diminishing returns past the middle of the range. Foreground optimizing is limited to roughly a third of a second per point of effort, background optimizing to about three seconds per point."
 L["Extra optimization"] = true
 L["ExtraOptDesc"] = "Turning on this option will make optimizing the route take approximately 40% longer, but will generate -slightly- better routes. Recommended setting is OFF."
 L["Foreground"] = true
@@ -177,7 +168,7 @@ L["Path with %d nodes found with length %.2f yards after %d iterations in %.2f s
 L["Now running TSP in the background..."] = true
 L["There is already a TSP running in background. Wait for it to complete first."] = true
 L["The following error occured in the background path generation coroutine, please report to Grum or Xinhuan:"] = true
-L["TOO_MANY_NODES_ERROR"] = "This route has more than 724 nodes, which is more than the Ant Colony optimizer can handle without running into memory allocation errors. Switch the algorithm to Lin-Kernighan or 2-opt / Or-opt, which have no node limit, or reduce the route by removing some nodes or by clustering."
+L["TOO_MANY_NODES_ERROR"] = "This route has more than 724 nodes. Please reduce it by removing some nodes or by clustering otherwise memory allocation errors will occur."
 L["Pass %d: %d%% - %d yards"] = true
 L["Pass %d: %d%%"] = true
 
