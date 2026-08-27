@@ -1,4 +1,4 @@
-﻿--[[
+--[[
 ********************************************************************************
 Routes
 @project-version@
@@ -1014,6 +1014,14 @@ local function ChatCommand(input)
 	if not input or input:trim() == "" then
 		LibStub("AceConfigDialog-3.0"):Open("Routes")
 	else
+		-- /routes skilldebug [itemID] - report node skill lookup diagnostics
+		local cmd = input:trim():lower()
+		if cmd == "skilldebug" or cmd:find("^skilldebug%s") then
+			if Routes.NodeSkillDebug then
+				Routes:NodeSkillDebug(tonumber(cmd:match("^skilldebug%s+(%d+)$")))
+			end
+			return
+		end
 		LibStub("AceConfigCmd-3.0").HandleCommand(Routes, "routes", "Routes", input)
 	end
 end
