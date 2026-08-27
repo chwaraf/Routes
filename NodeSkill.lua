@@ -684,8 +684,50 @@ function Routes:NodeSkillDebug(itemID)
 	end
 	local hRank, hSrc = RankSource("Herbalism")
 	local mRank, mSrc = RankSource("Mining")
-	Routes:Print(("=== SKILL RESULT: Herbalism=%s [%s]  Mining=%s [%s]  (paste THIS line)"):format(
-		tostring(hRank), tostring(hSrc), tostring(mRank), tostring(mSrc)))
+	-- If anything is missing, list the raw skill lines this client reports,
+	-- so a name mismatch (vs. a genuinely unlearned profession) is visible
+	-- in the single pasted line.
+	local extra = ""
+	if not hRank or not mRank then
+		local seen = {}
+		if GetNumSkillLines and GetSkillLineInfo then
+			local ok, count = pcall(GetNumSkillLines)
+			if ok and type(count) == "number" then
+				for i = 1, count do
+					local ok2, name, isHeader, _icon, rank = pcall(GetSkillLineInfo, i)
+					if ok2 and not isHeader and name then
+						seen[#seen + 1] = ("%s %s"):format(name, tostring(rank))
+					end
+				end
+			end
+		end
+		if #seen == 0 and GetNumPrimaryProfessions and GetPrimaryProfessionInfo then
+			local ok, count = pcall(GetNumPrimaryProfessions)
+			if ok and type(count) == "number" then
+				for i = 1, count do
+					local ok2, name, _icon, rank = pcall(GetPrimaryProfessionInfo, i)
+					if ok2 and name then
+						seen[#seen + 1] = ("%s %s"):format(name, tostring(rank))
+					end
+				end
+			end
+		end
+		if #seen == 0 and GetProfessions and GetProfessionInfo then
+			local ok, n = pcall(function() return select("#", GetProfessions()) end)
+			if ok and type(n) == "number" then
+				for i = 1, n do
+					local idx = select(i, GetProfessions())
+					local ok2, name, _icon, rank = pcall(GetProfessionInfo, idx)
+					if ok2 and name then
+						seen[#seen + 1] = ("%s %s"):format(name, tostring(rank))
+					end
+				end
+			end
+		end
+		extra = "  lines seen: [" .. table.concat(seen, ", ") .. "]"
+	end
+	Routes:Print(("=== SKILL RESULT: Herbalism=%s [%s]  Mining=%s [%s]%s  (paste THIS line)"):format(
+		tostring(hRank), tostring(hSrc), tostring(mRank), tostring(mSrc), extra))
 end
 
 -- vim: ts=4 noexpandtab
