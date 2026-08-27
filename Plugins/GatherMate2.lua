@@ -43,10 +43,10 @@ local translate_db_type = {
 }
 -- herb and mining nodes get their minimum required skill appended to the
 -- name, colored against the player's own profession skill
-local function node_skill_suffix(db_type, node)
+local function node_skill_suffix(db_type, node, nodeName)
 	local prof = translate_db_type[db_type]
 	if (prof == "Herbalism" or prof == "Mining") and Routes.GetNodeSkillSuffix then
-		return Routes:GetNodeSkillSuffix(prof, node)
+		return Routes:GetNodeSkillSuffix(prof, node, nodeName)
 	end
 	return nil
 end
@@ -69,8 +69,10 @@ local function Summarize(data, zone)
 			for node,count in pairs(amount_of) do
 				local translatednode = GatherMate2:GetNameForNode(db_type, node)
 				if translatednode then
-					local suffix = node_skill_suffix(db_type, node) or ""
-					data[ ("%s;%s;%s;%s"):format(SourceName, db_type, node, count) ] = ("%s - %s%s (%d)"):format(L[SourceName..db_type], translatednode, suffix, count)
+					-- append the minimum required skill, colored by the
+					-- character's own skill: "Herbalism - Goldthorn (34) - 170"
+					local suffix = node_skill_suffix(db_type, node, translatednode) or ""
+					data[ ("%s;%s;%s;%s"):format(SourceName, db_type, node, count) ] = ("%s - %s (%d)%s"):format(L[SourceName..db_type], translatednode, count, suffix)
 				end
 			end
 		end
