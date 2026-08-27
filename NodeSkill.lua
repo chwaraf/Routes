@@ -279,40 +279,96 @@ end
 function Routes:NodeSkillDebug(itemID)
 	local function yn(v) return v and "yes" or "no" end
 	local build, major = GetBuildInfo()
-	Routes:Print(("NodeSkill debug - client %s (interface %s)"):format(build, major))
-	Routes:Print(("  tooltip methods: SetItemByID=%s ProcessInfo=%s AddItem=%s SetHyperlink=%s"):format(
-		yn(tt.SetItemByID), yn(tt.ProcessInfo), yn(tt.AddItem), yn(tt.SetHyperlink)))
-	Routes:Print(("  C_TooltipInfo=%s item getter=%s  reading: NumLines=%s GetNumLines=%s GetText=%s TextLeft1=%s"):format(
-		yn(C_TooltipInfo ~= nil), tostring(CTooltipItemGetter()),
+	Routes:Print(("NodeSkill debug - client %s (interface %s, project %d)"):format(build, major, WOW_PROJECT_ID or 0))
+
+	-- what the hidden tooltip frame exposes
+	Routes:Print(("  frame: SetItemByID=%s ProcessInfo=%s AddItem=%s SetHyperlink=%s NumLines=%s GetNumLines=%s GetText=%s TextLeft1=%s"):format(
+		yn(tt.SetItemByID), yn(tt.ProcessInfo), yn(tt.AddItem), yn(tt.SetHyperlink),
 		yn(tt.NumLines ~= nil), yn(tt.GetNumLines ~= nil), yn(tt.GetText ~= nil),
 		yn(tt.TextLeft1 ~= nil or _G[tt:GetName().."TextLeft1"] ~= nil)))
+
+	-- item data APIs
+	local CTI = C_TooltipInfo or {}
+	local CI = C_Item or {}
+	Routes:Print(("  C_TooltipInfo: ByLocation=%s ByID=%s TooltipData=%s Tooltip=%s"):format(
+		yn(CTI.GetItemByLocation ~= nil), yn(CTI.GetItemByID ~= nil),
+		yn(CTI.GetItemTooltipData ~= nil), yn(CTI.GetItemTooltip ~= nil)))
+	Routes:Print(("  C_Item: GetItemLocation=%s GetItemLink=%s GetItemInfo=%s  GetItemLink(global)=%s"):format(
+		yn(CI.GetItemLocation ~= nil), yn(CI.GetItemLink ~= nil), yn(CI.GetItemInfo ~= nil),
+		yn(GetItemLink ~= nil)))
 	RefreshProfNames()
 	Routes:Print(("  profession names: Herbalism=%s Mining=%s  C_TradeSkillUI=%s"):format(
 		tostring(profName.Herbalism), tostring(profName.Mining), yn(C_TradeSkillUI ~= nil)))
 
-	-- Sample item: prefer the one given, else well-known classic nodes
-	-- (Kingsblood herb / Tin Vein ore, valid ids on all supported clients).
+	-- Sample item: prefer the one given (e.g. /routes skilldebug 2259),
+	-- else well-known classic nodes (Kingsblood herb / Tin Vein ore).
 	local samples = { itemID, 22595, 22603 }
 	for s = 1, #samples do
 		local id = samples[s]
 		if type(id) == "number" and id > 0 then
 			local known
-			if C_Item and C_Item.GetItemInfo then
-				known = C_Item.GetItemInfo(id) ~= nil
+			if CI.GetItemInfo then
+				known = CI.GetItemInfo(id) ~= nil
 			elseif GetItemInfo then
 				known = GetItemInfo(id) ~= nil
 			end
-			Routes:Print(("  item %d: known=%s"):format(id, yn(known)))
-			local ok = PopulateItemTooltip(id)
-			local count = TooltipLineCount()
-			Routes:Print(("    populate=%s lines=%d"):format(yn(ok), count))
-			for i = 1, math_max(count, 1) do
-				Routes:Print(("    line %d: %s"):format(i, tostring(TooltipLineText(i))))
+			local name
+			if known then
+				if CI.GetItemInfo then name = CI.GetItemInfo(id) else name = GetItemInfo(id) end
 			end
+			Routes:Print(("  item %d: known=%s name=%s"):format(id, yn(known), tostring(name)))
+
+			-- frame sanity: can this frame render lines at all?
+			tt:Hide()
+			if tt.AddLine then
+				tt:AddLine("skilldebug sanity line")
+				Routes:Print(("    sanity AddLine -> lines=%d text1=[%s]"):format(
+					TooltipLineCount(), tostring(TooltipLineText(1))))
+			else
+				Routes:Print("    sanity AddLine: absent on this frame")
+			end
+			tt:Hide()
+
+			-- probe each populate strategy separately
+			tt:Hide()
+			if tt.SetItemByID then
+				tt:SetItemByID(id)
+				Routes:Print(("    probe SetItemByID -> lines=%d"):format(TooltipLineCount()))
+			else
+				Routes:Print("    probe SetItemByID: absent")
+			end
+			tt:Hide()
+			if tt.ProcessInfo then
+				local info = ItemTooltipInfo(id)
+				if info then
+					tt:ProcessInfo(info)
+					Routes:Print(("    probe ProcessInfo(%s) -> lines=%d"):format(info.getterName, TooltipLineCount()))
+				else
+					Routes:Print("    probe ProcessInfo: no usable item getter")
+				end
+			else
+				Routes:Print("    probe ProcessInfo: absent")
+			end
+			tt:Hide()
+			if tt.AddItem then
+				tt:AddItem(id)
+				Routes:Print(("    probe AddItem -> lines=%d"):format(TooltipLineCount()))
+			else
+				Routes:Print("    probe AddItem: absent")
+			end
+			tt:Hide()
+			if tt.SetHyperlink then
+				local link = ItemLinkForID(id)
+				tt:SetHyperlink(link)
+				Routes:Print(("    probe SetHyperlink -> lines=%d link=[%s]"):format(TooltipLineCount(), link:sub(1, 60)))
+			else
+				Routes:Print("    probe SetHyperlink: absent")
+			end
+
 			local req, line = NodeRequiredSkill(id, "Herbalism")
-			Routes:Print(("    herbalism lookup: req=%s line=%s"):format(tostring(req), tostring(line)))
+			Routes:Print(("    result: herbalism req=%s line=[%s]"):format(tostring(req), tostring(line)))
 			local req2, line2 = NodeRequiredSkill(id, "Mining")
-			Routes:Print(("    mining lookup:    req=%s line=%s"):format(tostring(req2), tostring(line2)))
+			Routes:Print(("    result: mining    req=%s line=[%s]"):format(tostring(req2), tostring(line2)))
 			break
 		end
 	end
