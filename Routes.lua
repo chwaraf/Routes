@@ -1830,7 +1830,7 @@ function ConfigHandler:ClusterRoute(info)
 	-- the synchronous O(n^2) clustering pass on a big route outruns the UI
 	-- watchdog ("script ran too long") on some clients, while the chunked
 	-- run never can.
-	ConfigHandler.ClusterRouteBackground(info)
+	ConfigHandler:ClusterRouteBackground(info)
 end
 
 function ConfigHandler:ClusterRouteBackground(info)
