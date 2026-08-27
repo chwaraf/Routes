@@ -1,4 +1,4 @@
-﻿-- Routes
+-- Routes
 -- enUS and enGB Localization file
 
 local L = LibStub("AceLocale-3.0"):NewLocale("Routes", "enUS", true)
@@ -175,6 +175,7 @@ L["Background"] = true
 L["Background Disclaimer"] = "This will perform the TSP route generation in the background much more slowly without locking up WoW. Please note that your WoW will still take a noticable performance hit."
 L["Path with %d nodes found with length %.2f yards after %d iterations in %.2f seconds."] = true
 L["Now running TSP in the background..."] = true
+L["Now optimizing the route; the game stays responsive while it runs..."] = true
 L["There is already a TSP running in background. Wait for it to complete first."] = true
 L["The following error occured in the background path generation coroutine, please report to Grum or Xinhuan:"] = true
 L["TOO_MANY_NODES_ERROR"] = "This route has more than 724 nodes, which is more than the Ant Colony optimizer can handle without running into memory allocation errors. Switch the algorithm to Lin-Kernighan or 2-opt / Or-opt, which have no node limit, or reduce the route by removing some nodes or by clustering."

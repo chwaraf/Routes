@@ -82,13 +82,49 @@ local function TooltipLineText(i)
 	return nil
 end
 
--- Which C_TooltipInfo getter builds an item tooltip on this client (if any).
-local function CTooltipItemGetter()
+-- Build a ProcessInfo payload for this item, or nil when this client has no
+-- way to fetch item tooltip data. The API was refactored across versions:
+-- retail 10.0+ is item-location based (C_Item.GetItemLocation +
+-- C_TooltipInfo.GetItemByLocation), older clients are item-id based.
+local function ItemTooltipInfo(itemID)
 	if not C_TooltipInfo then return nil end
-	if C_TooltipInfo.GetItemByID then return "GetItemByID" end
-	if C_TooltipInfo.GetItemTooltipData then return "GetItemTooltipData" end
-	if C_TooltipInfo.GetItemTooltip then return "GetItemTooltip" end
+	if C_TooltipInfo.GetItemByLocation then
+		local location
+		if C_Item and C_Item.GetItemLocation then
+			location = C_Item.GetItemLocation(itemID)
+		end
+		if location then
+			return { getterName = "GetItemByLocation", getterArgs = { location } }
+		end
+		return nil
+	end
+	if C_TooltipInfo.GetItemByID then
+		return { getterName = "GetItemByID", getterArgs = { itemID } }
+	end
+	if C_TooltipInfo.GetItemTooltipData then
+		return { getterName = "GetItemTooltipData", getterArgs = { itemID } }
+	end
+	if C_TooltipInfo.GetItemTooltip then
+		return { getterName = "GetItemTooltip", getterArgs = { itemID } }
+	end
 	return nil
+end
+
+-- An item link for this item id, using whichever API this client provides.
+-- Note: on 10.0+ C_Item.GetItemLink takes an item-location object, not an id.
+local function ItemLinkForID(itemID)
+	if C_Item and C_Item.GetItemLocation and C_Item.GetItemLink then
+		local location = C_Item.GetItemLocation(itemID)
+		if location then
+			local link = C_Item.GetItemLink(location)
+			if link then return link end
+		end
+	end
+	if GetItemLink then
+		local link = GetItemLink(itemID)
+		if link then return link end
+	end
+	return ("item:%d:0:0:0:0:0:0:0:0:0:0"):format(itemID)
 end
 
 -- Try to populate the hidden tooltip with the item, using whichever method
@@ -103,9 +139,9 @@ local function PopulateItemTooltip(itemID)
 	end
 
 	if tt.ProcessInfo then
-		local getter = CTooltipItemGetter()
-		if getter then
-			tt:ProcessInfo({ getterName = getter, getterArgs = { itemID } })
+		local info = ItemTooltipInfo(itemID)
+		if info then
+			tt:ProcessInfo(info)
 			if TooltipLineCount() > 0 then return true end
 		end
 	end
@@ -116,16 +152,7 @@ local function PopulateItemTooltip(itemID)
 	end
 
 	if tt.SetHyperlink then
-		local link
-		if C_Item and C_Item.GetItemLink then
-			link = C_Item.GetItemLink(itemID)
-		elseif GetItemLink then
-			link = GetItemLink(itemID)
-		end
-		if not link then
-			link = ("item:%d:0:0:0:0:0:0:0:0:0:0"):format(itemID)
-		end
-		tt:SetHyperlink(link)
+		tt:SetHyperlink(ItemLinkForID(itemID))
 		if TooltipLineCount() > 0 then return true end
 	end
 

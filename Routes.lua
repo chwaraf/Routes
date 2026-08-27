@@ -1826,13 +1826,11 @@ function ConfigHandler:RecreateRoute(info)
 end
 
 function ConfigHandler:ClusterRoute(info)
-	local zone = tonumber(info[2])
-	local route = Routes.routekeys[zone][ info[3] ]
-	local t = db.routes[zone][route]
-	t.route, t.metadata, t.length = Routes.TSP:ClusterRoute(db.routes[zone][route].route, zone, db.defaults.cluster_dist)
-	t.cluster_dist = db.defaults.cluster_dist
-	Routes:DrawWorldmapLines()
-	Routes:DrawMinimapLines(true)
+	-- Chunked via the same coroutine machinery as the Background button:
+	-- the synchronous O(n^2) clustering pass on a big route outruns the UI
+	-- watchdog ("script ran too long") on some clients, while the chunked
+	-- run never can.
+	ConfigHandler.ClusterRouteBackground(info)
 end
 
 function ConfigHandler:ClusterRouteBackground(info)
@@ -2060,6 +2058,22 @@ function ConfigHandler:IsACO()
 	return db.defaults.tsp.algorithm == "aco"
 end
 
+-- Shared completion handling for the Foreground/Background optimize buttons.
+local function ApplyOptimizedRoute(t, output, meta, length, iter, timetaken)
+	t.route = output
+	t.length = length
+	t.metadata = meta
+	Routes:Print(L["Path with %d nodes found with length %.2f yards after %d iterations in %.2f seconds."]:format(#output, length, iter, timetaken))
+
+	-- redraw lines
+	local AutoShow = Routes:GetModule("AutoShow", true)
+	if AutoShow and db.defaults.use_auto_showhide then
+		AutoShow:ApplyVisibility()
+	end
+	Routes:DrawWorldmapLines()
+	Routes:DrawMinimapLines(true)
+end
+
 function ConfigHandler:DoForeground(info)
 	local zone = tonumber(info[2])
 	local route = Routes.routekeys[zone][ info[3] ]
@@ -2077,19 +2091,23 @@ function ConfigHandler:DoForeground(info)
 			tinsert(taboos, db.taboo[zone][tabooname])
 		end
 	end
-	local output, meta, length, iter, timetaken = Routes.TSP:SolveTSP(t.route, t.metadata, taboos, zone, db.defaults.tsp)
-	t.route = output
-	t.length = length
-	t.metadata = meta
-	Routes:Print(L["Path with %d nodes found with length %.2f yards after %d iterations in %.2f seconds."]:format(#output, length, iter, timetaken))
-
-	-- redraw lines
-	local AutoShow = Routes:GetModule("AutoShow", true)
-	if AutoShow and db.defaults.use_auto_showhide then
-		AutoShow:ApplyVisibility()
+	-- Run through the same chunked (coroutine) machinery as the Background
+	-- button: a single blocking call on a big route outruns the UI watchdog
+	-- ("script ran too long") on some clients, while the chunked run never
+	-- can - each OnUpdate slice is only a few milliseconds, the UI stays
+	-- responsive, and the result lands a moment later.
+	local running, errormsg = Routes.TSP:SolveTSPBackground(t.route, t.metadata, taboos, zone, db.defaults.tsp)
+	if (running == 1) then
+		Routes:Print(L["Now optimizing the route; the game stays responsive while it runs..."])
+		Routes.TSP:SetFinishFunction(function(output, meta, length, iter, timetaken)
+			ApplyOptimizedRoute(t, output, meta, length, iter, timetaken)
+		end)
+	elseif (running == 2) then
+		Routes:Print(L["There is already a TSP running in background. Wait for it to complete first."])
+	elseif (running == 3) then
+		Routes:Print(L["The following error occured in the background path generation coroutine, please report to Grum or Xinhuan:"])
+		Routes:Print(errormsg)
 	end
-	Routes:DrawWorldmapLines()
-	Routes:DrawMinimapLines(true)
 end
 
 function ConfigHandler:DoBackground(info)
