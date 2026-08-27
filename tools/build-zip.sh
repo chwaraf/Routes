@@ -86,9 +86,12 @@ print(f'verified: {n} files, all TOC entries and XML refs resolve')
 EOF
 
 # --- zip (Routes/ at the root) ---
+# -X: omit extra file attributes (e.g. Unix UT timestamps) for maximum
+#     compatibility with picky Windows unzip tools
 cd "$WORK"
 rm -f dist_zip.zip
-zip -rq dist_zip.zip Routes
+zip -rXq dist_zip.zip Routes
+echo "sha256: $(sha256sum dist_zip.zip | cut -d' ' -f1)  ($(stat -c%s dist_zip.zip) bytes)"
 
 # --- workspace copy (best effort) ---
 if [ -w /home/user ]; then
