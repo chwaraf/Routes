@@ -130,6 +130,76 @@ end
 local playerSkillCache = {}
 -- The character's current rank in "Herbalism" or "Mining" (nil if not
 -- learned). Cached per profession; the rank only changes on skill-up.
+--
+-- Different client generations expose the rank through different APIs, so
+-- several are probed (all wrapped in pcall, since a hybrid classic client
+-- may expose an API that exists but does not work):
+--   1. GetNumPrimaryProfessions() + GetPrimaryProfessionInfo(i)
+--        -- the classic primary API
+--   2. GetProfessions() + GetProfessionInfo(idx)
+--        -- TBC+ / hybrid clients; note the return order is
+--        -- name, icon, skillLevel, maxSkillLevel (rank is the THIRD value)
+--   3. GetNumSkillLines() + GetSkillLineInfo(i)
+--        -- the oldest spellbook API: name, isHeader, icon, rank, ...
+local function RankFromPrimaryProfessions(target)
+	if not GetNumPrimaryProfessions or not GetPrimaryProfessionInfo then return nil end
+	local ok, count = pcall(GetNumPrimaryProfessions)
+	if not ok or type(count) ~= "number" then return nil end
+	for i = 1, count do
+		local ok2, name, _icon, rank = pcall(GetPrimaryProfessionInfo, i)
+		if ok2 and name == target and type(rank) == "number" then
+			return rank
+		end
+	end
+	return nil
+end
+
+local function RankFromProfessions(target)
+	if not GetProfessions or not GetProfessionInfo then return nil end
+	local ok, n = pcall(function() return select("#", GetProfessions()) end)
+	if not ok or type(n) ~= "number" then return nil end
+	for i = 1, n do
+		local idx = select(i, GetProfessions())
+		if idx then
+			local ok2, name, _icon, rank = pcall(GetProfessionInfo, idx)
+			if ok2 and name == target and type(rank) == "number" then
+				return rank
+			end
+		end
+	end
+	-- tolerant match for clients that suffix the profession name
+	for i = 1, n do
+		local idx = select(i, GetProfessions())
+		if idx then
+			local ok2, name, _icon, rank = pcall(GetProfessionInfo, idx)
+			if ok2 and type(name) == "string" and name:find(target, 1, true) and type(rank) == "number" then
+				return rank
+			end
+		end
+	end
+	return nil
+end
+
+local function RankFromSkillLines(target)
+	if not GetNumSkillLines or not GetSkillLineInfo then return nil end
+	local ok, count = pcall(GetNumSkillLines)
+	if not ok or type(count) ~= "number" then return nil end
+	for i = 1, count do
+		local ok2, name, isHeader, _icon, rank = pcall(GetSkillLineInfo, i)
+		if ok2 and not isHeader and name == target and type(rank) == "number" then
+			return rank
+		end
+	end
+	-- tolerant match
+	for i = 1, count do
+		local ok2, name, isHeader, _icon, rank = pcall(GetSkillLineInfo, i)
+		if ok2 and not isHeader and type(name) == "string" and name:find(target, 1, true) and type(rank) == "number" then
+			return rank
+		end
+	end
+	return nil
+end
+
 local function PlayerSkillFor(prof)
 	local cached = playerSkillCache[prof]
 	if cached ~= nil then
@@ -139,31 +209,9 @@ local function PlayerSkillFor(prof)
 	local target = profName[prof]
 	local rank
 	if target then
-		for i = 1, 6 do
-			local idx = select(i, GetProfessions())
-			if idx then
-				-- GetProfessionInfo() returns name, rank, maxRank, texture --
-				-- the current rank is the SECOND return value, not the third
-				local name, current = GetProfessionInfo(idx)
-				if name == target then
-					rank = current
-					break
-				end
-			end
-		end
-		-- tolerant match for clients that suffix the profession name
-		if not rank then
-			for i = 1, 6 do
-				local idx = select(i, GetProfessions())
-				if idx then
-					local name, current = GetProfessionInfo(idx)
-					if name and name:find(target, 1, true) then
-						rank = current
-						break
-					end
-				end
-			end
-		end
+		rank = RankFromPrimaryProfessions(target)
+			or RankFromProfessions(target)
+			or RankFromSkillLines(target)
 	end
 	playerSkillCache[prof] = rank or false
 	return rank
@@ -173,7 +221,7 @@ end
 -- Color of the requirement number relative to the character's skill
 ----------------------------------------------------------------
 local function RequirementColor(skill, req)
-	if not skill then return nil end
+	if type(skill) ~= "number" then return nil end
 	if skill < req then return "ff3333" end     -- red: cannot pick up
 	local diff = skill - req
 	if diff < 25 then return "ff8040" end       -- orange
@@ -258,18 +306,24 @@ local function ItemTooltipInfo(itemID)
 end
 
 -- An item link for this item id, using whichever API this client provides.
--- Note: on 10.0+ C_Item.GetItemLink takes an item-location object, not an id.
+-- Note: on 10.0+ C_Item.GetItemLink takes an item-location object, not an id,
+-- while hybrid classic builds expose C_Item.GetItemLink(itemID) directly.
 local function ItemLinkForID(itemID)
-	if C_Item and C_Item.GetItemLocation and C_Item.GetItemLink then
-		local location = C_Item.GetItemLocation(itemID)
-		if location then
-			local link = C_Item.GetItemLink(location)
-			if link then return link end
+	if C_Item and C_Item.GetItemLink then
+		if C_Item.GetItemLocation then
+			local location = C_Item.GetItemLocation(itemID)
+			if location then
+				local ok, link = pcall(C_Item.GetItemLink, C_Item, location)
+				if ok and link then return link end
+			end
+		else
+			local ok, link = pcall(C_Item.GetItemLink, C_Item, itemID)
+			if ok and link then return link end
 		end
 	end
 	if GetItemLink then
-		local link = GetItemLink(itemID)
-		if link then return link end
+		local ok, link = pcall(GetItemLink, itemID)
+		if ok and link then return link end
 	end
 	return ("item:%d:0:0:0:0:0:0:0:0:0:0"):format(itemID)
 end
@@ -471,10 +525,57 @@ function Routes:NodeSkillDebug(itemID)
 		tostring(skill), tostring(mskill),
 		tostring(profName.Herbalism), tostring(profName.Mining)))
 
-	local id
-	for _, v in ipairs({ itemID, 2259, 2337 }) do
-		if type(v) == "number" and v > 0 then id = v break end
+	-- raw profession API dump: shows exactly what this client returns, so a
+	-- nil above is never a mystery
+	if GetNumPrimaryProfessions and GetPrimaryProfessionInfo then
+		local ok, count = pcall(GetNumPrimaryProfessions)
+		if ok and type(count) == "number" then
+			local parts = {}
+			for i = 1, count do
+				local ok2, name, _icon, rank, maxRank = pcall(GetPrimaryProfessionInfo, i)
+				if ok2 then parts[#parts + 1] = ("[%d %s %s/%s]"):format(i, tostring(name), tostring(rank), tostring(maxRank)) end
+			end
+			Routes:Print(("  GetNumPrimaryProfessions=%d %s"):format(count, table.concat(parts, " ")))
+		else
+			Routes:Print("  GetNumPrimaryProfessions: pcall failed")
+		end
+	else
+		Routes:Print("  GetNumPrimaryProfessions: absent")
 	end
+	if GetProfessions and GetProfessionInfo then
+		local ok, n = pcall(function() return select("#", GetProfessions()) end)
+		if ok and type(n) == "number" then
+			local parts = {}
+			for i = 1, n do
+				local idx = select(i, GetProfessions())
+				local ok2, name, _icon, rank, maxRank = pcall(GetProfessionInfo, idx)
+				if ok2 then parts[#parts + 1] = ("[idx %s %s %s/%s]"):format(tostring(idx), tostring(name), tostring(rank), tostring(maxRank)) end
+			end
+			Routes:Print(("  GetProfessions n=%d %s"):format(n, table.concat(parts, " ")))
+		else
+			Routes:Print("  GetProfessions: pcall failed")
+		end
+	else
+		Routes:Print("  GetProfessions: absent")
+	end
+	if GetNumSkillLines and GetSkillLineInfo then
+		local ok, count = pcall(GetNumSkillLines)
+		if ok and type(count) == "number" then
+			local parts = {}
+			for i = 1, count do
+				local ok2, name, isHeader, _icon, rank, _a, maxRank = pcall(GetSkillLineInfo, i)
+				if ok2 then parts[#parts + 1] = ("[%d %s%s %s/%s]"):format(i, tostring(name), isHeader and " header" or "", tostring(rank), tostring(maxRank)) end
+			end
+			Routes:Print(("  GetNumSkillLines=%d %s"):format(count, table.concat(parts, " ")))
+		else
+			Routes:Print("  GetNumSkillLines: pcall failed")
+		end
+	else
+		Routes:Print("  GetNumSkillLines: absent")
+	end
+
+	local id = itemID
+	if type(id) ~= "number" or id <= 0 then id = 2259 end -- Peacebloom (classic)
 	Routes:Print(("  item %d: table-skill=%s  suffix=%s"):format(
 		id, tostring(NodeSkillByID[id]), tostring(Routes:GetNodeSkillSuffix("Herbalism", id))))
 
@@ -492,54 +593,63 @@ function Routes:NodeSkillDebug(itemID)
 		yn(CI.GetItemLocation ~= nil), yn(CI.GetItemLink ~= nil), yn(CI.GetItemInfo ~= nil),
 		yn(GetItemLink ~= nil)))
 
-	local samples = { itemID, 22595, 22603 }
-	for s = 1, #samples do
-		local sid = samples[s]
-		if type(sid) == "number" and sid > 0 then
-			Routes:Print(("  tooltip probe item %d: known=%s"):format(sid, yn(ItemKnown(sid))))
-			tt:Hide()
-			if tt.SetItemByID then
-				pcall(tt.SetItemByID, tt, sid)
-				Routes:Print(("    probe SetItemByID -> lines=%d"):format(TooltipLineCount()))
+	do
+		local sid = id
+		Routes:Print(("  tooltip probe item %d: known=%s"):format(sid, yn(ItemKnown(sid))))
+		tt:Hide()
+		if tt.SetItemByID then
+			pcall(tt.SetItemByID, tt, sid)
+			Routes:Print(("    probe SetItemByID -> lines=%d"):format(TooltipLineCount()))
+		else
+			Routes:Print("    probe SetItemByID: absent")
+		end
+		tt:Hide()
+		if tt.ProcessInfo then
+			local info = ItemTooltipInfo(sid)
+			if info then
+				pcall(tt.ProcessInfo, tt, info)
+				Routes:Print(("    probe ProcessInfo(%s) -> lines=%d"):format(info.getterName, TooltipLineCount()))
 			else
-				Routes:Print("    probe SetItemByID: absent")
+				Routes:Print("    probe ProcessInfo: no usable item getter")
 			end
+		else
+			Routes:Print("    probe ProcessInfo: absent")
+		end
+		tt:Hide()
+		if tt.AddItem then
+			pcall(tt.AddItem, tt, sid)
+			Routes:Print(("    probe AddItem -> lines=%d"):format(TooltipLineCount()))
+		else
+			Routes:Print("    probe AddItem: absent")
+		end
+		tt:Hide()
+		local link = ItemLinkForID(sid)
+		if tt.SetHyperlink then
+			pcall(tt.SetHyperlink, tt, link)
+			Routes:Print(("    probe SetHyperlink(%s) -> lines=%d"):format(link:sub(1, 40), TooltipLineCount()))
+		elseif type(GameTooltip_SetHyperlink) == "function" then
+			pcall(GameTooltip_SetHyperlink, tt, link)
+			Routes:Print(("    probe SetHyperlink-global(%s) -> lines=%d"):format(link:sub(1, 40), TooltipLineCount()))
+		end
+		if type(GameTooltip_SetItemTooltip) == "function" then
 			tt:Hide()
-			if tt.ProcessInfo then
-				local info = ItemTooltipInfo(sid)
-				if info then
-					pcall(tt.ProcessInfo, tt, info)
-					Routes:Print(("    probe ProcessInfo(%s) -> lines=%d"):format(info.getterName, TooltipLineCount()))
-				else
-					Routes:Print("    probe ProcessInfo: no usable item getter")
+			pcall(GameTooltip_SetItemTooltip, tt, sid)
+			Routes:Print(("    probe SetItemTooltip-global -> lines=%d"):format(TooltipLineCount()))
+		end
+		if C_Item and C_Item.GetItemLink and not C_Item.GetItemLocation then
+			tt:Hide()
+			local ok, directLink = pcall(C_Item.GetItemLink, C_Item, sid)
+			if ok and directLink then
+				if tt.SetHyperlink then
+					pcall(tt.SetHyperlink, tt, directLink)
+					Routes:Print(("    probe SetHyperlink(C_Item direct) -> lines=%d"):format(TooltipLineCount()))
 				end
 			else
-				Routes:Print("    probe ProcessInfo: absent")
+				Routes:Print("    probe C_Item.GetItemLink: no link")
 			end
-			tt:Hide()
-			if tt.AddItem then
-				pcall(tt.AddItem, tt, sid)
-				Routes:Print(("    probe AddItem -> lines=%d"):format(TooltipLineCount()))
-			else
-				Routes:Print("    probe AddItem: absent")
-			end
-			tt:Hide()
-			if tt.SetHyperlink then
-				pcall(tt.SetHyperlink, tt, ItemLinkForID(sid))
-				Routes:Print(("    probe SetHyperlink -> lines=%d"):format(TooltipLineCount()))
-			elseif type(GameTooltip_SetHyperlink) == "function" then
-				pcall(GameTooltip_SetHyperlink, tt, ItemLinkForID(sid))
-				Routes:Print(("    probe SetHyperlink-global -> lines=%d"):format(TooltipLineCount()))
-			elseif type(GameTooltip_SetItemTooltip) == "function" then
-				pcall(GameTooltip_SetItemTooltip, tt, sid)
-				Routes:Print(("    probe SetItemTooltip-global -> lines=%d"):format(TooltipLineCount()))
-			else
-				Routes:Print("    probe SetHyperlink: absent")
-			end
-			for i = 1, math_max(TooltipLineCount(), 1) do
-				Routes:Print(("    line %d: [%s]"):format(i, tostring(TooltipLineText(i))))
-			end
-			break
+		end
+		for i = 1, math_max(TooltipLineCount(), 1) do
+			Routes:Print(("    line %d: [%s]"):format(i, tostring(TooltipLineText(i))))
 		end
 	end
 end
