@@ -30,6 +30,27 @@ end
 ------------------------------------------
 -- functions
 
+-- returns the english name, translated name for the node so we can store it was being requested
+-- also returns the type of db for use with auto show/hide route
+local translate_db_type = {
+	["Herb Gathering"] = "Herbalism",
+	["Mining"] = "Mining",
+	["Fishing"] = "Fishing",
+	["Extract Gas"] = "ExtractGas",
+	["Treasure"] = "Treasure",
+	["Archaeology"] = "Archaeology",
+	["Logging"] = "Logging",
+}
+-- herb and mining nodes get their minimum required skill appended to the
+-- name, colored against the player's own profession skill
+local function node_skill_suffix(db_type, node)
+	local prof = translate_db_type[db_type]
+	if (prof == "Herbalism" or prof == "Mining") and Routes.GetNodeSkillSuffix then
+		return Routes:GetNodeSkillSuffix(prof, node)
+	end
+	return nil
+end
+
 local amount_of = {}
 local function Summarize(data, zone)
 	LN = LibStub("AceLocale-3.0"):GetLocale("GatherMate2Nodes", true) -- Workaround LoD of GatherMate2 if AddonLoader is used.
@@ -48,7 +69,8 @@ local function Summarize(data, zone)
 			for node,count in pairs(amount_of) do
 				local translatednode = GatherMate2:GetNameForNode(db_type, node)
 				if translatednode then
-					data[ ("%s;%s;%s;%s"):format(SourceName, db_type, node, count) ] = ("%s - %s (%d)"):format(L[SourceName..db_type], translatednode, count)
+					local suffix = node_skill_suffix(db_type, node) or ""
+					data[ ("%s;%s;%s;%s"):format(SourceName, db_type, node, count) ] = ("%s - %s%s (%d)"):format(L[SourceName..db_type], translatednode, suffix, count)
 				end
 			end
 		end
@@ -56,18 +78,6 @@ local function Summarize(data, zone)
 	return data
 end
 source.Summarize = Summarize
-
--- returns the english name, translated name for the node so we can store it was being requested
--- also returns the type of db for use with auto show/hide route
-local translate_db_type = {
-	["Herb Gathering"] = "Herbalism",
-	["Mining"] = "Mining",
-	["Fishing"] = "Fishing",
-	["Extract Gas"] = "ExtractGas",
-	["Treasure"] = "Treasure",
-	["Archaeology"] = "Archaeology",
-	["Logging"] = "Logging",
-}
 local function AppendNodes(node_list, zone, db_type, node_type)
 	if type(GatherMate2.gmdbs[db_type]) == "table" then
 		node_type = tonumber(node_type)
