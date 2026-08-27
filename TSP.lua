@@ -81,6 +81,8 @@ local floor, ceil = floor, ceil
 local coroutine = coroutine
 local tinsert, tremove = tinsert, tremove
 local debugprofilestop = debugprofilestop
+local debugprofilestart = debugprofilestart
+local math_max = math.max
 local inf = math.huge
 local exp = math.exp
 local log = math.log
@@ -328,9 +330,21 @@ function TSP:SolveTSPACO(nodes, metadata, taboos, zoneID, parameters, path, nonb
 	if nonblocking then
 		startTime = GetTime()
 	else
+		-- See the note in SolveTSPILS: make sure the profiler is running so
+		-- the elapsed time below is meaningful on every client.
+		if debugprofilestart then debugprofilestart() end
 		startTime = debugprofilestop()
 	end
 	local zoneW, zoneH	= Routes.Dragons:GetZoneSize(zoneID)
+	-- Foreground ACO is a single blocking call; keep it inside the UI
+	-- watchdog's "script ran too long" window. Background is unbounded.
+	local acoTimeBudget = nonblocking and inf or 0.8
+	local function acoElapsed()
+		if nonblocking then
+			return GetTime() - startTime
+		end
+		return (debugprofilestop() - startTime) / 1000
+	end
 
 	local INITIAL_PHEROMONE = parameters.initial_pheromone or 0.1   -- Parameter: Initial pheromone trail value
 	local ALPHA             = parameters.alpha or 1                 -- Parameter: Likelihood of ants to follow pheromone trails (larger value == more likely)
@@ -435,7 +449,12 @@ function TSP:SolveTSPACO(nodes, metadata, taboos, zoneID, parameters, path, nonb
 	if numAnts >= 25 then
 		MAXUNCHANGEDINTERATION = 2
 	end
+	local firstPass = true
 	while nochanges < MAXUNCHANGEDINTERATION do
+		-- Always let one full pass complete (it populates shortestPath),
+		-- then stop when the foreground budget is exhausted.
+		if not firstPass and acoElapsed() >= acoTimeBudget then break end
+		firstPass = false
 		nochanges = nochanges + 1
 		count = count + 1
 		
@@ -785,6 +804,12 @@ function TSP:SolveTSPILS(nodes, metadata, taboos, zoneID, parameters, path, nonb
 	if nonblocking then
 		startTime = GetTime()
 	else
+		-- The foreground budget below relies on debugprofilestop(); on some
+		-- clients it only measures against an explicit start, so make sure
+		-- one is running. Without it elapsedTime() stays ~0 and the run
+		-- would be unbounded until the UI watchdog kills it with
+		-- "script ran too long".
+		if debugprofilestart then debugprofilestart() end
 		startTime = debugprofilestop()
 	end
 
@@ -882,6 +907,12 @@ function TSP:SolveTSPILS(nodes, metadata, taboos, zoneID, parameters, path, nonb
 		end
 		return (debugprofilestop() - startTime) / 1000
 	end
+	-- Hard work backstop for foreground runs: a blocking run must stay well
+	-- inside the UI watchdog's "script ran too long" window even if the
+	-- client's profiler timing is broken and the time budget above never
+	-- triggers. Background runs are unbounded (they yield between chunks).
+	local maxExamined = nonblocking and inf or math_max(20000, numNodes * 50)
+	local maxKicks = nonblocking and inf or math_max(200, numNodes)
 
 	local cand, candW = {}, {}
 	do
@@ -1376,9 +1407,10 @@ function TSP:SolveTSPILS(nodes, metadata, taboos, zoneID, parameters, path, nonb
 			examined = examined + 1
 			if examined % 32 == 0 then
 				if nonblocking then yield() end
-				if elapsedTime() >= timeBudget then
-					-- Out of time. Every move left the tour valid, so stopping
-					-- mid-pass just means a less polished one, not a broken one.
+				if examined >= maxExamined or elapsedTime() >= timeBudget then
+					-- Out of time (or hit the hard work cap). Every move left
+					-- the tour valid, so stopping mid-pass just means a less
+					-- polished one, not a broken one.
 					while dequeue() do end
 					break
 				end
@@ -1442,7 +1474,7 @@ function TSP:SolveTSPILS(nodes, metadata, taboos, zoneID, parameters, path, nonb
 
 	local quarter = floor(numNodes / 4)
 	if quarter >= 1 then
-		while sinceImprove < noImproveLimit do
+		while sinceImprove < noImproveLimit and kicks < maxKicks do
 			local elapsed = elapsedTime()
 			if elapsed >= timeBudget then break end
 
