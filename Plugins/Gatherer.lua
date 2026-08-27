@@ -29,6 +29,14 @@ end
 ------------------------------------------
 -- functions
 
+-- returns the english name, translated name for the node so we can store it was being requested
+-- also returns the type of db for use with auto show/hide route
+local translate_db_type = {
+	["HERB"] = "Herbalism",
+	["MINE"] = "Mining",
+	["OPEN"] = "Treasure",
+	["ARCH"] = "Archaeology",
+}
 local function Summarize(data, zone)
 	local amount_of = {}
 	local db_type_of = {}
@@ -61,14 +69,6 @@ local function Summarize(data, zone)
 end
 source.Summarize = Summarize
 
--- returns the english name, translated name for the node so we can store it was being requested
--- also returns the type of db for use with auto show/hide route
-local translate_db_type = {
-	["HERB"] = "Herbalism",
-	["MINE"] = "Mining",
-	["OPEN"] = "Treasure",
-	["ARCH"] = "Archaeology",
-}
 local function AppendNodes(node_list, zone, db_type, node_type)
 	local zoneID = Routes.LZName[zone]
 	node_type = tonumber(node_type)

@@ -2701,7 +2701,7 @@ do
 				-- Fall back to the map currently viewed on the world map (on
 				-- clients where GetMapID() returns a uiMapID).
 				local name = GetPlayerRouteZone()
-				if not name and WoW90 then
+				if not name then
 					name = ZoneNameForMap(WorldMapFrame and WorldMapFrame.GetMapID and WorldMapFrame:GetMapID())
 				end
 				if not name then return nil end
@@ -3547,7 +3547,7 @@ do
 				-- Same auto-detection as for routes: use the zone the player is
 				-- currently standing in, falling back to the viewed world map.
 				local name = GetPlayerRouteZone()
-				if not name and WoW90 then
+				if not name then
 					name = ZoneNameForMap(WorldMapFrame and WorldMapFrame.GetMapID and WorldMapFrame:GetMapID())
 				end
 				if not name then return nil end

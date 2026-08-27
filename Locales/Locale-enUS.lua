@@ -178,6 +178,7 @@ L["Now running TSP in the background..."] = true
 L["Now optimizing the route; the game stays responsive while it runs..."] = true
 L["There is already a TSP running in background. Wait for it to complete first."] = true
 L["The following error occured in the background path generation coroutine, please report to Grum or Xinhuan:"] = true
+L["The following error occured in the background clustering coroutine, please report to Grum or Xinhuan:"] = true
 L["TOO_MANY_NODES_ERROR"] = "This route has more than 724 nodes, which is more than the Ant Colony optimizer can handle without running into memory allocation errors. Switch the algorithm to Lin-Kernighan or 2-opt / Or-opt, which have no node limit, or reduce the route by removing some nodes or by clustering."
 L["Pass %d: %d%% - %d yards"] = true
 L["Pass %d: %d%%"] = true
