@@ -141,14 +141,25 @@ local playerSkillCache = {}
 --        -- name, icon, skillLevel, maxSkillLevel (rank is the THIRD value)
 --   3. GetNumSkillLines() + GetSkillLineInfo(i)
 --        -- the oldest spellbook API: name, isHeader, icon, rank, ...
+local function RankValue(rank)
+	-- some hybrid clients return the rank as a numeric string
+	if type(rank) == "number" then return rank end
+	if type(rank) == "string" then
+		local n = tonumber(rank)
+		if n then return n end
+	end
+	return nil
+end
+
 local function RankFromPrimaryProfessions(target)
 	if not GetNumPrimaryProfessions or not GetPrimaryProfessionInfo then return nil end
 	local ok, count = pcall(GetNumPrimaryProfessions)
 	if not ok or type(count) ~= "number" then return nil end
 	for i = 1, count do
 		local ok2, name, _icon, rank = pcall(GetPrimaryProfessionInfo, i)
-		if ok2 and name == target and type(rank) == "number" then
-			return rank
+		if ok2 and name == target then
+			local r = RankValue(rank)
+			if r then return r end
 		end
 	end
 	return nil
@@ -162,8 +173,9 @@ local function RankFromProfessions(target)
 		local idx = select(i, GetProfessions())
 		if idx then
 			local ok2, name, _icon, rank = pcall(GetProfessionInfo, idx)
-			if ok2 and name == target and type(rank) == "number" then
-				return rank
+			if ok2 and name == target then
+				local r = RankValue(rank)
+				if r then return r end
 			end
 		end
 	end
@@ -172,8 +184,9 @@ local function RankFromProfessions(target)
 		local idx = select(i, GetProfessions())
 		if idx then
 			local ok2, name, _icon, rank = pcall(GetProfessionInfo, idx)
-			if ok2 and type(name) == "string" and name:find(target, 1, true) and type(rank) == "number" then
-				return rank
+			if ok2 and type(name) == "string" and name:find(target, 1, true) then
+				local r = RankValue(rank)
+				if r then return r end
 			end
 		end
 	end
@@ -186,15 +199,17 @@ local function RankFromSkillLines(target)
 	if not ok or type(count) ~= "number" then return nil end
 	for i = 1, count do
 		local ok2, name, isHeader, _icon, rank = pcall(GetSkillLineInfo, i)
-		if ok2 and not isHeader and name == target and type(rank) == "number" then
-			return rank
+		if ok2 and not isHeader and name == target then
+			local r = RankValue(rank)
+			if r then return r end
 		end
 	end
 	-- tolerant match
 	for i = 1, count do
 		local ok2, name, isHeader, _icon, rank = pcall(GetSkillLineInfo, i)
-		if ok2 and not isHeader and type(name) == "string" and name:find(target, 1, true) and type(rank) == "number" then
-			return rank
+		if ok2 and not isHeader and type(name) == "string" and name:find(target, 1, true) then
+			local r = RankValue(rank)
+			if r then return r end
 		end
 	end
 	return nil
