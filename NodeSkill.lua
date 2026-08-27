@@ -142,9 +142,11 @@ local function PlayerSkillFor(prof)
 		for i = 1, 6 do
 			local idx = select(i, GetProfessions())
 			if idx then
-				local name = GetProfessionInfo(idx)
+				-- GetProfessionInfo() returns name, rank, maxRank, texture --
+				-- the current rank is the SECOND return value, not the third
+				local name, current = GetProfessionInfo(idx)
 				if name == target then
-					rank = select(3, GetProfessionInfo(idx))
+					rank = current
 					break
 				end
 			end
@@ -154,9 +156,9 @@ local function PlayerSkillFor(prof)
 			for i = 1, 6 do
 				local idx = select(i, GetProfessions())
 				if idx then
-					local name = GetProfessionInfo(idx)
+					local name, current = GetProfessionInfo(idx)
 					if name and name:find(target, 1, true) then
-						rank = select(3, GetProfessionInfo(idx))
+						rank = current
 						break
 					end
 				end
