@@ -2640,6 +2640,19 @@ do
 		create_choices[create_zone][key] = value
 		--Routes:Print(("Setting choice: %s to %s"):format(key or "nil", value and "true" or "false"));
 	end
+	-- The node skill suffix baked into the list strings above depends on the
+	-- character's profession rank, which can become available (or change)
+	-- after the first dropdown open -- e.g. professions not yet loaded when
+	-- the list was first built. NodeSkill.lua calls this hook when a rank
+	-- appears, disappears or changes, so the per-zone cache is dropped and
+	-- the next open rebuilds the strings.
+	function Routes.OnNodeSkillChanged()
+		for k in pairs(last_zone) do last_zone[k] = nil end
+		for k in pairs(create_data) do create_data[k] = nil end
+		for k in pairs(create_choices) do create_choices[k] = nil end
+		LibStub("AceConfigRegistry-3.0"):NotifyChange("Routes")
+	end
+
 
 	function Routes:SetupSourcesOptTables()
 		-- reuse table

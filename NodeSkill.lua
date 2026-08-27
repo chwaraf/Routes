@@ -127,7 +127,14 @@ local function RefreshProfNames()
 	profName.Mining = baseName({ 2575 })
 end
 
+-- Successes are cached for the session (the rank only changes on skill-up);
+-- FAILURES are only remembered for a short TTL, because profession data is
+-- not always available on the very first lookups right after login -- a
+-- failed early lookup must not poison every later node list.
 local playerSkillCache = {}
+local playerSkillFailAt = {}
+local PLAYER_SKILL_FAIL_TTL = 10 -- seconds
+
 -- The character's current rank in "Herbalism" or "Mining" (nil if not
 -- learned). Cached per profession; the rank only changes on skill-up.
 --
@@ -215,10 +222,19 @@ local function RankFromSkillLines(target)
 	return nil
 end
 
+-- previous rank per profession, to fire Routes.OnNodeSkillChanged() when the
+-- rank appears, disappears or changes (the node list cache must be dropped
+-- so the next dropdown open rebuilds the colored strings)
+local lastKnownRank = {}
+
 local function PlayerSkillFor(prof)
 	local cached = playerSkillCache[prof]
 	if cached ~= nil then
 		return cached or nil
+	end
+	local failAt = playerSkillFailAt[prof]
+	if failAt and (GetTime() - failAt) < PLAYER_SKILL_FAIL_TTL then
+		return nil -- failed recently; retry after the TTL, not per node
 	end
 	RefreshProfNames()
 	local target = profName[prof]
@@ -228,7 +244,20 @@ local function PlayerSkillFor(prof)
 			or RankFromProfessions(target)
 			or RankFromSkillLines(target)
 	end
-	playerSkillCache[prof] = rank or false
+	if rank then
+		playerSkillCache[prof] = rank
+		playerSkillFailAt[prof] = nil
+	else
+		playerSkillFailAt[prof] = GetTime()
+	end
+	local prev = lastKnownRank[prof]
+	if (rank == nil) ~= (prev == nil) or (rank ~= nil and rank ~= prev) then
+		lastKnownRank[prof] = rank
+		if Routes.OnNodeSkillChanged then
+			local ok = pcall(Routes.OnNodeSkillChanged, Routes)
+			if not ok then lastKnownRank[prof] = prev end
+		end
+	end
 	return rank
 end
 
@@ -236,7 +265,9 @@ end
 -- Color of the requirement number relative to the character's skill
 ----------------------------------------------------------------
 local function RequirementColor(skill, req)
-	if type(skill) ~= "number" then return nil end
+	if type(skill) ~= "number" then
+		return "ff3333" -- no profession (or rank unknown) = cannot pick up
+	end
 	if skill < req then return "ff3333" end     -- red: cannot pick up
 	local diff = skill - req
 	if diff < 25 then return "ff8040" end       -- orange
