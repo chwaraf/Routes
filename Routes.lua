@@ -428,6 +428,35 @@ local XY_cache_mt = {
 setmetatable( X_cache, XY_cache_mt )
 setmetatable( Y_cache, XY_cache_mt )
 
+-- Precomputed world-space coordinates for each route's points, so the
+-- per-frame minimap loop skips a string allocation + two hash lookups per
+-- point. On Classic that allocation churn on every redraw is meaningful GC
+-- pressure (random frame spikes). Weak keys: entries vanish with the route
+-- table; also cleared explicitly from every place that mutates a route
+-- (Routes.ClearRouteDescCache).
+local route_points_cache = setmetatable({}, { __mode = "k" })
+local function GetRoutePoints(route_data, zoneID)
+	local cached = route_points_cache[route_data]
+	if cached then return cached end
+	local route = route_data.route
+	local n = #route
+	local fake_point = db.defaults.fake_point
+	local pts = {}
+	for i = 1, n do
+		local point = route[i]
+		if point ~= fake_point then
+			local key = zoneID .. ";" .. point
+			local X = X_cache[key]
+			local Y = Y_cache[key]
+			if X and Y then
+				pts[i] = { X, Y }
+			end
+		end
+	end
+	route_points_cache[route_data] = pts
+	return pts
+end
+
 function Routes:DrawMinimapLines(forceUpdate)
 	if not db.defaults.draw_minimap then
 		G:HideLines(Minimap)
@@ -520,10 +549,14 @@ function Routes:DrawMinimapLines(forceUpdate)
 				local last_y = nil
 				local last_inside = nil
 
+				local pts = GetRoutePoints(route_data, currentZoneID)
+
 				-- if we loop - make sure the 'last' gets filled with the right info
 				if route_data.looped and route_data.route[ #route_data.route ] ~= defaults.fake_point then
-					local key = format("%s;%s", currentZoneID, route_data.route[ #route_data.route ])
-					last_x, last_y = X_cache[key], Y_cache[key]
+					local p = pts[ #route_data.route ]
+					if p then
+						last_x, last_y = p[1], p[2]
+					end
 					if minimap_rotate then
 						local dx = last_x - cx
 						local dy = last_y - cy
@@ -532,7 +565,6 @@ function Routes:DrawMinimapLines(forceUpdate)
 					end
 					last_inside = is_inside( last_x, last_y, cx, cy, radius )
 				end
-
 				-- loop over the route
 				for i = 1, #route_data.route do
 					local point = route_data.route[i]
@@ -544,8 +576,10 @@ function Routes:DrawMinimapLines(forceUpdate)
 						cur_y = nil
 						cur_inside = false
 					else
-						local key = format("%s;%s", currentZoneID, point)
-						cur_x, cur_y = X_cache[key], Y_cache[key]
+						local p = pts[i]
+						if p then
+							cur_x, cur_y = p[1], p[2]
+						end
 						if minimap_rotate then
 							local dx = cur_x - cx
 							local dy = cur_y - cy
@@ -1108,8 +1142,11 @@ timerFrame:Hide()
 timerFrame.elapsed = 0
 timerFrame:SetScript("OnUpdate", function(self, elapsed)
 	self.elapsed = self.elapsed + elapsed
-	if self.elapsed > 0.025 or self.force then -- throttle to a max of 40 redraws per sec
-		self.elapsed = 0                       -- kinda unnecessary since at default 1 yard refresh, its limited to 36 redraws/sec
+	if self.elapsed > 0.05 or self.force then -- throttle to a max of 20 redraws per sec: route
+		self.elapsed = 0                       -- lines are static in world space, 20fps is visually
+		                                       -- indistinguishable while moving and halves the
+		                                       -- per-frame drawing cost that can crowd another
+		                                       -- UI frame (e.g. the options Open) over budget
 		Routes:DrawMinimapLines(self.force)    -- only need 25 redraws/sec to perceive smooth motion anyway
 		self.force = nil
 	end
@@ -1961,6 +1998,7 @@ do
 	local descCache = setmetatable({}, { __mode = "k" })
 	function Routes.ClearRouteDescCache()
 		for k in pairs(descCache) do descCache[k] = nil end
+		for k in pairs(route_points_cache) do route_points_cache[k] = nil end
 	end
 
 	local function CountKeys(tbl)
