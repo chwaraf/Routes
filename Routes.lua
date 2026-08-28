@@ -2278,6 +2278,63 @@ function ConfigHandler:DoBackground(info)
 	end
 end
 
+-- Cluster, then optimize, as one operation. Clustering runs FIRST because it
+-- shrinks the route (nodes -> cluster points), so the optimizer then solves a
+-- much smaller problem for essentially the same result. The two jobs run one
+-- after the other on the shared background lock: stage two is started from
+-- stage one's finish callback, which only runs after the lock is released.
+function ConfigHandler:ClusterAndOptimize(info)
+	local zone = tonumber(info[2])
+	local route = Routes.routekeys[zone][ info[3] ]
+	local t = db.routes[zone][route]
+
+	local function startOptimize()
+		if db.defaults.tsp.algorithm == "aco" and #t.route > 724 then
+			-- ACO only; see the note in DoForeground()
+			Routes:Print(L["TOO_MANY_NODES_ERROR"])
+			return
+		end
+		local taboos = {}
+		for tabooname, used in pairs(t.taboos) do
+			if used then
+				tinsert(taboos, db.taboo[zone][tabooname])
+			end
+		end
+		local running, errormsg = Routes.TSP:SolveTSPBackground(t.route, t.metadata, taboos, zone, db.defaults.tsp)
+		if running == 1 then
+			Routes:Print(L["Now optimizing the clustered route; the game stays responsive while it runs..."])
+			Routes.TSP:SetFinishFunction(function(output, meta, length, iter, timetaken)
+				ApplyOptimizedRoute(t, output, meta, length, iter, timetaken)
+			end)
+		elseif running == 2 then
+			-- The lock was just released by the clustering job; this is only
+			-- possible if something else started in the meantime.
+			Routes:Print(L["There is already a TSP running in background. Wait for it to complete first."])
+		elseif running == 3 then
+			Routes:Print(L["The following error occured in the background path generation coroutine, please report to Grum or Xinhuan:"])
+			Routes:Print(errormsg)
+		end
+	end
+
+	local function clusterFinished(clusters, metadata, length)
+		t.route, t.metadata, t.length = clusters, metadata, length
+		t.cluster_dist = db.defaults.cluster_dist
+		Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
+		Routes:Print(L["Clustering done, now optimizing the cluster points..."])
+		startOptimize()
+	end
+
+	local running, errormsg = Routes.TSP:ClusterRouteBackground(t.route, zone, db.defaults.cluster_dist, clusterFinished)
+	if running == 1 then
+		Routes:Print(L["Now clustering the route; it will be optimized automatically when clustering finishes."])
+	elseif running == 2 then
+		Routes:Print(L["There is already a TSP running in background. Wait for it to complete first."])
+	elseif running == 3 then
+		Routes:Print(L["The following error occured in the background clustering coroutine, please report to Grum or Xinhuan:"])
+		Routes:Print(errormsg)
+	end
+end
+
 do
 	local t = {}
 	function ConfigHandler:GetTabooRegions(info)
@@ -2504,6 +2561,14 @@ do
 						hidden = "IsCluster",
 						disabled = "IsCluster",
 						order = 72,
+					},
+					cluster_optimize = {
+						name = L["Cluster + Optimize"], type = "execute",
+						desc = L["Cluster + Optimize Desc"],
+						func = "ClusterAndOptimize",
+						hidden = "IsCluster",
+						disabled = "IsCluster",
+						order = 73,
 					},
 					uncluster = {
 						name = L["Uncluster"], type = "execute",

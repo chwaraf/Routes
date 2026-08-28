@@ -195,6 +195,11 @@ L["Background Route Clustering completed."] = true
 L["Now running route clustering in the background..."] = true
 L["Route Clustering completed."] = true
 L["Now clustering the route; the game stays responsive while it runs..."] = true
+L["Cluster + Optimize"] = true
+L["Cluster + Optimize Desc"] = "Cluster the route, then automatically optimize the cluster points. Clustering runs first, so the optimizer solves a much smaller problem. Both steps run in the background, one after the other."
+L["Now clustering the route; it will be optimized automatically when clustering finishes."] = true
+L["Clustering done, now optimizing the cluster points..."] = true
+L["Now optimizing the clustered route; the game stays responsive while it runs..."] = true
 L["Uncluster"] = true
 L["Uncluster this route"] = true
 
