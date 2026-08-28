@@ -2166,6 +2166,10 @@ function ConfigHandler:IsACO()
 	return db.defaults.tsp.algorithm == "aco"
 end
 
+local function RefreshRoutesOptions()
+	LibStub("AceConfigRegistry-3.0"):NotifyChange("Routes")
+end
+
 -- Shared completion handling for the Foreground/Background optimize buttons.
 local function ApplyOptimizedRoute(t, output, meta, length, iter, timetaken)
 	t.route = output
@@ -2181,6 +2185,12 @@ local function ApplyOptimizedRoute(t, output, meta, length, iter, timetaken)
 	end
 	Routes:DrawWorldmapLines()
 	Routes:DrawMinimapLines(true)
+
+	-- Re-feed the open AceConfig route tab after asynchronous work changes the
+	-- route shape. In particular, Cluster + Optimize sets t.metadata during the
+	-- cluster stage; without NotifyChange the Cluster button can remain visible
+	-- until the user closes and reopens the addon.
+	RefreshRoutesOptions()
 end
 
 function ConfigHandler:DoForeground(info)
@@ -2252,22 +2262,11 @@ function ConfigHandler:DoBackground(info)
 			end
 		end)
 		Routes.TSP:SetFinishFunction(function(output, meta, length, iter, timetaken)
-			t.route = output
-			t.length = length
-			t.metadata = meta
-			local msg = L["Path with %d nodes found with length %.2f yards after %d iterations in %.2f seconds."]:format(#output, length, iter, timetaken)
-			Routes:Print(msg)
+			ApplyOptimizedRoute(t, output, meta, length, iter, timetaken)
 			local frame = LibStub("AceConfigDialog-3.0").OpenFrames["Routes"]
 			if frame then
-				frame:SetStatusText(msg)
+				frame:SetStatusText(L["Path with %d nodes found with length %.2f yards after %d iterations in %.2f seconds."]:format(#output, length, iter, timetaken))
 			end
-			-- redraw lines
-			local AutoShow = Routes:GetModule("AutoShow", true)
-			if AutoShow and db.defaults.use_auto_showhide then
-				AutoShow:ApplyVisibility()
-			end
-			Routes:DrawWorldmapLines()
-			Routes:DrawMinimapLines(true)
 		end)
 	elseif (running == 2) then
 		Routes:Print(L["There is already a TSP running in background. Wait for it to complete first."])
@@ -2320,6 +2319,7 @@ function ConfigHandler:ClusterAndOptimize(info)
 		t.route, t.metadata, t.length = clusters, metadata, length
 		t.cluster_dist = db.defaults.cluster_dist
 		Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
+		RefreshRoutesOptions()
 		Routes:Print(L["Clustering done, now optimizing the cluster points..."])
 		startOptimize()
 	end

@@ -67,6 +67,11 @@ tools/verify.sh
    clustering must yield before heavy setup and avoid unbounded O(n^3) work.
    Classic Era is especially prone to `script ran too long` / multi-minute
    stalls here.
+8. **Async route mutations must refresh AceConfig.** If a background callback
+   changes route shape or clustering state (`route`, `metadata`, `cluster_dist`,
+   `taboolist`, etc.), clear route description caches and call
+   `AceConfigRegistry-3.0:NotifyChange("Routes")`; otherwise buttons such as
+   Cluster / Uncluster may not update until the addon UI is reopened.
 
 
 ## Agent workflow for changes
