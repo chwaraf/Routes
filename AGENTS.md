@@ -62,6 +62,11 @@ tools/verify.sh
 6. **Session branch discipline**: all work happens on the `arena/*` session
    branch; changes are delivered via PR to `master`. `tools/build-zip.sh`
    pushes the *current* branch — don't hardcode one.
+7. **Background clustering must really be background.** The Cluster and
+   Cluster + Optimize buttons run from AceConfig click handlers, so large-route
+   clustering must yield before heavy setup and avoid unbounded O(n^3) work.
+   Classic Era is especially prone to `script ran too long` / multi-minute
+   stalls here.
 
 
 ## Agent workflow for changes

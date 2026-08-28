@@ -1896,190 +1896,144 @@ end
 --   length   - The length of the new route in yards
 -- Notes: The original table sent in is unmodified. New tables are returned.
 --[[
-Hierarchical Agglomerative Clustering
+Fast radius clustering
 
-Data clustering algorithms can be hierarchical or partitional. Hierarchical
-algorithms find successive clusters using previously established clusters,
-whereas partitional algorithms determine all clusters at once. Hierarchical
-algorithms can be agglomerative ("bottom-up") or divisive ("top-down").
-Agglomerative algorithms begin with each element as a separate cluster and
-merge them into successively larger clusters. Divisive algorithms begin with
-the whole set and proceed to divide it into successively smaller clusters.
-
-This method (Agglomerative) builds the hierarchy from the individual elements
-by progressively merging clusters. The first step is to determine which
-elements to merge in a cluster. Usually, we want to take the two closest
-elements, according to the chosen distance.
-
-Optionally, one can also construct a distance matrix at this stage, where the
-number in the i-th row j-th column is the distance between the i-th and j-th
-elements. Then, as clustering progresses, rows and columns are merged as the
-clusters are merged and the distances updated. This is a common way to
-implement this type of clustering, and has the benefit of catching distances
-between clusters.
-
--- From Wikipedia, Cluster analysis
--- http://en.wikipedia.org/wiki/Cluster_analysis
--- 25 January 2008
-]]
-function TSP:ClusterRoute(nodes, zoneID, radius, nonblocking)
-	local weight = {} -- weight matrix
-	local metadata = {} -- metadata after clustering
-
+The route is clustered by grouping nearby points around a centroid while
+ensuring every original node in a cluster remains within the configured radius
+of that centroid. A spatial grid limits candidate checks to nearby nodes, so
+large data-source routes finish quickly enough for WoW clients while preserving
+the important guarantee that clustering is reversible through metadata.
+]]function TSP:ClusterRoute(nodes, zoneID, radius, nonblocking)
 	local numNodes = #nodes
 	local zoneW, zoneH = Routes.Dragons:GetZoneSize(zoneID)
 	local diameter = radius * 2
-	--local taboo = 0
+	local radius2 = radius * radius
+	local diameter2 = diameter * diameter
 
-	-- Return to the UI before doing any of the O(n^2) setup below. Without
-	-- this first yield, pressing a background clustering button still performs
-	-- the full distance-matrix build in the button click handler; on Classic Era
-	-- that can trip the UI watchdog with "script ran too long" before the
-	-- coroutine ever reaches its old first yield.
+	-- Background clustering is started from an AceConfig button click. Yield
+	-- before doing any real work so the click handler can return immediately on
+	-- Classic Era instead of tripping the UI watchdog on large routes.
 	if nonblocking then
 		coroutine.yield()
 	end
 
-	-- Create a copy of the nodes[] table and use this instead of the original because we want to modify this table
-	local nodes2 = {}
-	for i = 1, numNodes do
-		nodes2[i] = nodes[i]
-		weight[i] = {} -- make weight[] a 2-dimensional table
-		if nonblocking and i % 256 == 0 then yield() end
-	end
-	local nodes = nodes2
+	-- The original agglomerative clustering implementation repeatedly scanned
+	-- an NxN distance matrix and removed matrix columns with tremove(). That is
+	-- close to O(n^3) and can take many minutes for large GatherMate routes even
+	-- when chunked across frames. Use a spatial grid instead: each cluster starts
+	-- from one unassigned route point and only considers unassigned neighbours
+	-- within 2r, because no valid cluster member can be farther than 2r from any
+	-- other member when every member must remain within r of the centroid.
+	local X, Y, cellX, cellY = {}, {}, {}, {}
+	local cells = {}
+	local cellSize = radius
+	if cellSize <= 0 then cellSize = 1 end
+	local cellRange = 2 -- diameter / cellSize
 
-	-- Step 1: Generate the weight table
 	for i = 1, numNodes do
 		local coord = nodes[i]
-		local x, y = floor(coord / 10000) / 10000, (coord % 10000) / 10000
-		local w = weight[i]
-		w[i] = 0
-		for j = i+1, numNodes do
-			local coord = nodes[j]
-			local x2, y2 = floor(coord / 10000) / 10000, (coord % 10000) / 10000
-			w[j] = (((x2 - x)*zoneW)^2 + ((y2 - y)*zoneH)^2)^0.5 -- Calc distance between each node pair
-			weight[j][i] = true -- dummy value just to fill the lower half of the table so that tremove() will work on it
+		local x = floor(coord / 10000) / 10000 * zoneW
+		local y = (coord % 10000) / 10000 * zoneH
+		X[i], Y[i] = x, y
+		local cx, cy = floor(x / cellSize), floor(y / cellSize)
+		cellX[i], cellY[i] = cx, cy
+		local key = cx .. ":" .. cy
+		local bucket = cells[key]
+		if not bucket then
+			bucket = {}
+			cells[key] = bucket
 		end
-		if nonblocking then yield() end
-	end
-
-	-- Step 2: Generate the initial metadata tables
-	for i = 1, numNodes do
-		metadata[i] = {}
-		metadata[i][1] = nodes[i]
+		bucket[#bucket+1] = i
 		if nonblocking and i % 256 == 0 then yield() end
 	end
 
-	-- Step 5: ...and loop until there is no such pair of nodes
-	while true do
-		-- Step 3: Find the closest pair of nodes within the merge radius
-		local smallestDist = inf
-		local node1, node2
-		for i = 1, numNodes-1 do
-			local w = weight[i]
-			for j = i+1, numNodes do
-				local w2 = w[j]
-				if w2 <= diameter and w2 < smallestDist then
-					smallestDist = w2
-					node1 = i
-					node2 = j
-				end
-			end
-			if nonblocking then yield() end
-		end
-		-- Step 4: Merge node2 into node1...
-		if node1 then
-			local m1, m2 = metadata[node1], metadata[node2]
-			local node1num, node2num = #m1, #m2
-			local totalnum = node1num + node2num
-			-- Calculate the new centroid of node1
-			local n1, n2 = nodes[node1], nodes[node2]
-			local node1x = ( floor(n1 / 10000) / 10000 * node1num + floor(n2 / 10000) / 10000 * node2num ) / totalnum
-			local node1y = ( (n1 % 10000) / 10000 * node1num + (n2 % 10000) / 10000 * node2num ) / totalnum
-			-- Calculate the new coord from the new (x,y)
-			local coord = floor(node1x * 10000 + 0.5) * 10000 + floor(node1y * 10000 + 0.5)
-			node1x, node1y = floor(coord / 10000) / 10000, (coord % 10000) / 10000 -- to round off the coordinate
-			-- Check that the merged point is valid
-			for i = 1, node1num do
-				local coord = m1[i]
-				local x, y = floor(coord / 10000) / 10000, (coord % 10000) / 10000
-				local t = (((node1x - x)*zoneW)^2 + ((node1y - y)*zoneH)^2)^0.5
-				if t > radius then
-					-- Merging this node will cause the merged point to be too far away
-					-- from an original point, so taboo it by making the weight infinity
-					-- And store a backup in the lower half of the table
-					weight[node2][node1] = weight[node1][node2]
-					weight[node1][node2] = inf
-					--taboo = taboo + 1
-					break
-				end
-			end
-			if weight[node1][node2] ~= inf then
-				for i = 1, node2num do
-					local coord = m2[i]
-					local x, y = floor(coord / 10000) / 10000, (coord % 10000) / 10000
-					local t = (((node1x - x)*zoneW)^2 + ((node1y - y)*zoneH)^2)^0.5
-					if t > radius then
-						weight[node2][node1] = weight[node1][node2]
-						weight[node1][node2] = inf
-						--taboo = taboo + 1
-						break
+	local unassigned = {}
+	for i = 1, numNodes do
+		unassigned[i] = true
+	end
+
+	local clustered, metadata = {}, {}
+	local candidateDistance = {}
+	local function bySeedDistance(a, b)
+		return candidateDistance[a] < candidateDistance[b]
+	end
+
+	for seed = 1, numNodes do
+		if unassigned[seed] then
+			unassigned[seed] = false
+			local cluster = { seed }
+			local sumX, sumY = X[seed], Y[seed]
+			local count = 1
+
+			local candidates = {}
+			for k in pairs(candidateDistance) do candidateDistance[k] = nil end
+			local n = 0
+			local seedCellX, seedCellY = cellX[seed], cellY[seed]
+			for gy = seedCellY - cellRange, seedCellY + cellRange do
+				for gx = seedCellX - cellRange, seedCellX + cellRange do
+					local bucket = cells[gx .. ":" .. gy]
+					if bucket then
+						for bi = 1, #bucket do
+							local j = bucket[bi]
+							if unassigned[j] then
+								local dx, dy = X[j] - X[seed], Y[j] - Y[seed]
+								local d2 = dx*dx + dy*dy
+								if d2 <= diameter2 then
+									n = n + 1
+									candidates[n] = j
+									candidateDistance[j] = d2
+								end
+							end
+						end
 					end
 				end
+				if nonblocking then yield() end
 			end
-			if weight[node1][node2] ~= inf then
-				-- Merge the metadata of node2 into node1
-				for i = 1, node2num do
-					tinsert(m1, m2[i])
-				end
-				-- Set the new coord of node1
-				nodes[node1] = coord
-				-- Delete node2 from metadata[]
-				tremove(metadata, node2)
-				-- Delete node2 from nodes[]
-				tremove(nodes, node2)
-				-- Remove node2 from the weight table
-				for i = 1, numNodes do
-					tremove(weight[i], node2) -- remove column
-					if nonblocking then yield() end
-				end
-				tremove(weight, node2) -- remove row
-				-- Update number of nodes
-				numNodes = numNodes - 1
-				-- Update the weight table for all nodes relating to node1, this can untaboo nodes
-				for i = 1, node1-1 do
-					local coord = nodes[i]
-					local x, y = floor(coord / 10000) / 10000, (coord % 10000) / 10000
-					weight[i][node1] = (((node1x - x)*zoneW)^2 + ((node1y - y)*zoneH)^2)^0.5
-					if nonblocking then yield() end
-				end
-				for i = node1+1, numNodes do
-					local coord = nodes[i]
-					local x, y = floor(coord / 10000) / 10000, (coord % 10000) / 10000
-					weight[node1][i] = (((node1x - x)*zoneW)^2 + ((node1y - y)*zoneH)^2)^0.5
-					if nonblocking then yield() end
-				end
-			end
-		else
-			break -- loop termination
-		end
+			table.sort(candidates, bySeedDistance)
 
-		if nonblocking then
-			yield()
+			for ci = 1, #candidates do
+				local j = candidates[ci]
+				if unassigned[j] then
+					local newCount = count + 1
+					local centroidX = (sumX + X[j]) / newCount
+					local centroidY = (sumY + Y[j]) / newCount
+					local ok = true
+					for m = 1, #cluster do
+						local node = cluster[m]
+						local dx, dy = X[node] - centroidX, Y[node] - centroidY
+						if dx*dx + dy*dy > radius2 then
+							ok = false
+							break
+						end
+					end
+					if ok then
+						local dx, dy = X[j] - centroidX, Y[j] - centroidY
+						if dx*dx + dy*dy > radius2 then
+							ok = false
+						end
+					end
+					if ok then
+						unassigned[j] = false
+						cluster[#cluster+1] = j
+						sumX, sumY = sumX + X[j], sumY + Y[j]
+						count = newCount
+					end
+				end
+				if nonblocking and ci % 64 == 0 then yield() end
+			end
+
+			local outIndex = #clustered + 1
+			local centroidX, centroidY = sumX / count, sumY / count
+			clustered[outIndex] = floor(centroidX / zoneW * 10000 + 0.5) * 10000 + floor(centroidY / zoneH * 10000 + 0.5)
+			metadata[outIndex] = {}
+			for m = 1, #cluster do
+				metadata[outIndex][m] = nodes[cluster[m]]
+			end
 		end
+		if nonblocking and seed % 64 == 0 then yield() end
 	end
 
-	-- Get the new pathLength
-	local pathLength = weight[1][numNodes]
-	pathLength = pathLength == inf and weight[numNodes][1] or pathLength
-	for i = 1, numNodes-1 do
-		local w = weight[i][i+1]
-		pathLength = pathLength + (w == inf and weight[i+1][i] or w) -- use the backup in the lower half of the triangle if it was tabooed
-	end
-
-	--ChatFrame1:AddMessage(taboo.." tabooed")
-	return nodes, metadata, pathLength
+	return clustered, metadata, TSP:PathLength(clustered, zoneID)
 end
 
 function TSP:ClusterRouteBackground(nodes, zoneID, radius, finishFunc)
