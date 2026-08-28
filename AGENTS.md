@@ -72,6 +72,10 @@ tools/verify.sh
    `taboolist`, etc.), clear route description caches and call
    `AceConfigRegistry-3.0:NotifyChange("Routes")`; otherwise buttons such as
    Cluster / Uncluster may not update until the addon UI is reopened.
+9. **Node skill suffix state matters.** In `NodeSkill.lua`, distinguish an
+   unknown/unavailable profession rank from a confirmed missing profession:
+   missing Herbalism/Mining is shown as purple `No <profession> (<skill>)`,
+   while learned-but-too-low skill remains a red requirement number.
 
 
 ## Agent workflow for changes

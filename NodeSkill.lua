@@ -4,7 +4,8 @@
 --
 --   Herbalism - Goldthorn (34) - 170
 --                                  ^^^ colored:
---   red    - character skill below the requirement (cannot pick up)
+--   purple - profession is not learned at all
+--   red    - character has the profession but skill is below the requirement
 --   orange - within 25 above the requirement
 --   yellow - within 50
 --   green  - within 100
@@ -31,6 +32,7 @@
 
 local Routes = LibStub("AceAddon-3.0"):GetAddon("Routes", 1)
 if not Routes then return end
+local L = Routes.L or LibStub("AceLocale-3.0"):GetLocale("Routes", false)
 
 local GetSpellName = C_Spell and C_Spell.GetSpellName or GetSpellInfo
 local math_floor, math_max = math.floor, math.max
@@ -340,30 +342,28 @@ local function RankValue(rank)
 end
 
 local function RankFromPrimaryProfessions(target)
-	if not GetNumPrimaryProfessions or not GetPrimaryProfessionInfo then return nil end
+	if not GetNumPrimaryProfessions or not GetPrimaryProfessionInfo then return nil, nil end
 	local ok, count = pcall(GetNumPrimaryProfessions)
-	if not ok or type(count) ~= "number" then return nil end
+	if not ok or type(count) ~= "number" then return nil, nil end
 	for i = 1, count do
 		local ok2, name, _icon, rank = pcall(GetPrimaryProfessionInfo, i)
 		if ok2 and name == target then
-			local r = RankValue(rank)
-			if r then return r end
+			return RankValue(rank), true
 		end
 	end
-	return nil
+	return nil, false
 end
 
 local function RankFromProfessions(target)
-	if not GetProfessions or not GetProfessionInfo then return nil end
+	if not GetProfessions or not GetProfessionInfo then return nil, nil end
 	local ok, n = pcall(function() return select("#", GetProfessions()) end)
-	if not ok or type(n) ~= "number" then return nil end
+	if not ok or type(n) ~= "number" then return nil, nil end
 	for i = 1, n do
 		local idx = select(i, GetProfessions())
 		if idx then
 			local ok2, name, _icon, rank = pcall(GetProfessionInfo, idx)
 			if ok2 and name == target then
-				local r = RankValue(rank)
-				if r then return r end
+				return RankValue(rank), true
 			end
 		end
 	end
@@ -373,42 +373,53 @@ local function RankFromProfessions(target)
 		if idx then
 			local ok2, name, _icon, rank = pcall(GetProfessionInfo, idx)
 			if ok2 and type(name) == "string" and name:find(target, 1, true) then
-				local r = RankValue(rank)
-				if r then return r end
+				return RankValue(rank), true
 			end
 		end
 	end
-	return nil
+	return nil, false
 end
 
 local function RankFromSkillLines(target)
-	if not GetNumSkillLines or not GetSkillLineInfo then return nil end
+	if not GetNumSkillLines or not GetSkillLineInfo then return nil, nil end
 	local ok, count = pcall(GetNumSkillLines)
-	if not ok or type(count) ~= "number" then return nil end
+	if not ok or type(count) ~= "number" then return nil, nil end
 	for i = 1, count do
 		local ok2, name, isHeader, _icon, rank = pcall(GetSkillLineInfo, i)
 		if ok2 and not isHeader and name == target then
-			local r = RankValue(rank)
-			if r then return r end
+			return RankValue(rank), true
 		end
 	end
 	-- tolerant match
 	for i = 1, count do
 		local ok2, name, isHeader, _icon, rank = pcall(GetSkillLineInfo, i)
 		if ok2 and not isHeader and type(name) == "string" and name:find(target, 1, true) then
-			local r = RankValue(rank)
-			if r then return r end
+			return RankValue(rank), true
 		end
 	end
-	return nil
+	return nil, false
 end
 
+-- Returns rank, found:
+--   rank number, true  - profession is learned and rank is known
+--   nil, true          - profession is learned but rank was not available
+--   nil, false         - profession APIs worked and did not list it
+--   nil, nil           - profession APIs/names are unavailable; state unknown
 local function QuerySkillRank(prof)
 	local target = profName[prof]
-	if not target then return nil end
-	return RankFromPrimaryProfessions(target)
-		or RankFromProfessions(target)
-		or RankFromSkillLines(target)
+	if not target then return nil, nil end
+	local sawMissing = false
+	local rank, found = RankFromPrimaryProfessions(target)
+	if rank ~= nil then return rank, true end
+	if found then return nil, true elseif found == false then sawMissing = true end
+	rank, found = RankFromProfessions(target)
+	if rank ~= nil then return rank, true end
+	if found then return nil, true elseif found == false then sawMissing = true end
+	rank, found = RankFromSkillLines(target)
+	if rank ~= nil then return rank, true end
+	if found then return nil, true elseif found == false then sawMissing = true end
+	if sawMissing then return nil, false end
+	return nil, nil
 end
 
 -- previous rank per profession, to fire Routes.OnNodeSkillChanged() when the
@@ -417,24 +428,32 @@ end
 local lastKnownRank = {}
 
 local function UpdateSkillState(prof)
-	local rank = playerSkillCache[prof]
-	if rank == nil then
-		rank = QuerySkillRank(prof)
-		if rank then
+	local cached = playerSkillCache[prof]
+	local value
+	if cached ~= nil then
+		value = cached
+	else
+		local rank, found = QuerySkillRank(prof)
+		if rank ~= nil then
+			value = rank
 			playerSkillCache[prof] = rank
+		elseif found == false then
+			value = false -- known: profession is not learned
+			playerSkillCache[prof] = false
 		else
 			playerSkillFailAt[prof] = GetTime()
+			value = nil -- unknown/unavailable; retry after the short TTL
 		end
 	end
 	local prev = lastKnownRank[prof]
-	if (rank == nil) ~= (prev == nil) or (rank ~= nil and rank ~= prev) then
-		lastKnownRank[prof] = rank
+	if value ~= prev then
+		lastKnownRank[prof] = value
 		if Routes.OnNodeSkillChanged then
 			local ok = pcall(Routes.OnNodeSkillChanged, Routes)
 			if not ok then lastKnownRank[prof] = prev end
 		end
 	end
-	return rank
+	return value or nil
 end
 
 local function PlayerSkillFor(prof)
@@ -449,12 +468,24 @@ local function PlayerSkillFor(prof)
 	return UpdateSkillState(prof)
 end
 
+local function PlayerProfessionMissing(prof)
+	if playerSkillCache[prof] == nil then
+		UpdateSkillState(prof)
+	end
+	return playerSkillCache[prof] == false
+end
+
 -- Called once per node list (re)build from the options frame. If no rank is
 -- cached yet this forces a fresh query even within the per-node TTL, so
 -- profession data that loads after the first (uncolored) list build shows
 -- up colored on the very next open instead of after the TTL.
 function Routes:RefreshNodeSkills()
 	RefreshProfNames()
+	-- A known-missing profession is cached so a single node-list build does not
+	-- rescan the profession APIs for every node. Clear that cache on the next
+	-- list rebuild so learning Herbalism/Mining in the same session is noticed.
+	if playerSkillCache.Herbalism == false then playerSkillCache.Herbalism = nil end
+	if playerSkillCache.Mining == false then playerSkillCache.Mining = nil end
 	if playerSkillCache.Herbalism == nil then UpdateSkillState("Herbalism") end
 	if playerSkillCache.Mining == nil then UpdateSkillState("Mining") end
 end
@@ -462,16 +493,30 @@ end
 ----------------------------------------------------------------
 -- Color of the requirement number relative to the character's skill
 ----------------------------------------------------------------
-local function RequirementColor(skill, req)
+local function RequirementColor(skill, req, missingProfession)
+	if missingProfession then return "ffb060ff" end -- purple: profession not learned
 	if type(skill) ~= "number" then
-		return "ffff3333" -- no profession (or rank unknown) = cannot pick up
+		return "ffff3333" -- rank unknown = cannot confirm pickup
 	end
-	if skill < req then return "ffff3333" end   -- red: cannot pick up
+	if skill < req then return "ffff3333" end   -- red: learned, but too low
 	local diff = skill - req
 	if diff < 25 then return "ffff8040" end     -- orange
 	if diff < 50 then return "ffffff00" end     -- yellow
 	if diff < 100 then return "ff40cc40" end    -- green
 	return "ff808080"                           -- grey: no skill gain
+end
+
+local function RequirementSuffix(prof, req)
+	local skill = PlayerSkillFor(prof)
+	local missingProfession = PlayerProfessionMissing(prof)
+	local color = RequirementColor(skill, req, missingProfession)
+	if missingProfession then
+		return (" - |c%s%s|r"):format(color, L["No %s (%d)"]:format(profName[prof] or prof, req))
+	end
+	if color then
+		return (" - |c%s%d|r"):format(color, req)
+	end
+	return (" - %d"):format(req)
 end
 
 ----------------------------------------------------------------
@@ -751,8 +796,9 @@ end
 --           (Gatherer / GatherLite)
 -- Returns a display suffix like " - |cffff3333170|r" to append after the
 -- node count, or nil when the requirement is unknown. The number is colored
--- against the character's own rank (red when it is below the requirement or
--- the profession is not learned at all).
+-- against the character's own rank. If the profession is not learned at all,
+-- the suffix uses the localized "No <profession> (<skill>)" text in purple
+-- instead of the red low-skill number.
 function Routes:GetNodeSkillSuffix(prof, nodeID, nodeName)
 	if prof ~= "Herbalism" and prof ~= "Mining" then return nil end
 	RefreshProfNames()
@@ -766,11 +812,7 @@ function Routes:GetNodeSkillSuffix(prof, nodeID, nodeName)
 	end
 	if not req then return nil end
 
-	local color = RequirementColor(PlayerSkillFor(prof), req)
-	if color then
-		return (" - |c%s%d|r"):format(color, req)
-	end
-	return (" - %d"):format(req)
+	return RequirementSuffix(prof, req)
 end
 
 -- Item-id based variant, for data sources that hand us a real WoW item id
@@ -787,11 +829,7 @@ function Routes:GetNodeSkillSuffixFromItem(prof, itemID)
 	end
 	if not req then return nil end
 
-	local color = RequirementColor(PlayerSkillFor(prof), req)
-	if color then
-		return (" - |c%s%d|r"):format(color, req)
-	end
-	return (" - %d"):format(req)
+	return RequirementSuffix(prof, req)
 end
 
 ----------------------------------------------------------------
