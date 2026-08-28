@@ -2603,6 +2603,10 @@ do
 
 	local function get_source_values(info)
 		if not create_zone then return empty_table end
+		-- Refresh the profession rank state once per list open: if it became
+		-- available since the last build, the change hook drops last_zone and
+		-- the list below is rebuilt with colored skill numbers.
+		if Routes.RefreshNodeSkills then Routes:RefreshNodeSkills() end
 		local create_data = create_data[info.arg]
 		if last_zone[info.arg] == create_zone then return create_data end
 		-- reuse table

@@ -222,33 +222,28 @@ local function RankFromSkillLines(target)
 	return nil
 end
 
+local function QuerySkillRank(prof)
+	local target = profName[prof]
+	if not target then return nil end
+	return RankFromPrimaryProfessions(target)
+		or RankFromProfessions(target)
+		or RankFromSkillLines(target)
+end
+
 -- previous rank per profession, to fire Routes.OnNodeSkillChanged() when the
 -- rank appears, disappears or changes (the node list cache must be dropped
 -- so the next dropdown open rebuilds the colored strings)
 local lastKnownRank = {}
 
-local function PlayerSkillFor(prof)
-	local cached = playerSkillCache[prof]
-	if cached ~= nil then
-		return cached or nil
-	end
-	local failAt = playerSkillFailAt[prof]
-	if failAt and (GetTime() - failAt) < PLAYER_SKILL_FAIL_TTL then
-		return nil -- failed recently; retry after the TTL, not per node
-	end
-	RefreshProfNames()
-	local target = profName[prof]
-	local rank
-	if target then
-		rank = RankFromPrimaryProfessions(target)
-			or RankFromProfessions(target)
-			or RankFromSkillLines(target)
-	end
-	if rank then
-		playerSkillCache[prof] = rank
-		playerSkillFailAt[prof] = nil
-	else
-		playerSkillFailAt[prof] = GetTime()
+local function UpdateSkillState(prof)
+	local rank = playerSkillCache[prof]
+	if rank == nil then
+		rank = QuerySkillRank(prof)
+		if rank then
+			playerSkillCache[prof] = rank
+		else
+			playerSkillFailAt[prof] = GetTime()
+		end
 	end
 	local prev = lastKnownRank[prof]
 	if (rank == nil) ~= (prev == nil) or (rank ~= nil and rank ~= prev) then
@@ -259,6 +254,28 @@ local function PlayerSkillFor(prof)
 		end
 	end
 	return rank
+end
+
+local function PlayerSkillFor(prof)
+	local cached = playerSkillCache[prof]
+	if cached ~= nil then
+		return cached or nil
+	end
+	local failAt = playerSkillFailAt[prof]
+	if failAt and (GetTime() - failAt) < PLAYER_SKILL_FAIL_TTL then
+		return nil -- per-node path: don't hammer the API while data may load
+	end
+	return UpdateSkillState(prof)
+end
+
+-- Called once per node list (re)build from the options frame. If no rank is
+-- cached yet this forces a fresh query even within the per-node TTL, so
+-- profession data that loads after the first (uncolored) list build shows
+-- up colored on the very next open instead of after the TTL.
+function Routes:RefreshNodeSkills()
+	RefreshProfNames()
+	if playerSkillCache.Herbalism == nil then UpdateSkillState("Herbalism") end
+	if playerSkillCache.Mining == nil then UpdateSkillState("Mining") end
 end
 
 ----------------------------------------------------------------
@@ -565,6 +582,9 @@ function Routes:NodeSkillDebug(itemID)
 	local build, major = GetBuildInfo()
 	Routes:Print(("NodeSkill debug - client %s (interface %s, project %d)"):format(build, major, WOW_PROJECT_ID or 0))
 
+	-- refresh the shared state too, so running this command also drops the
+	-- node list cache when professions became available
+	Routes:RefreshNodeSkills()
 	local skill = PlayerSkillFor("Herbalism")
 	local mskill = PlayerSkillFor("Mining")
 	Routes:Print(("  player skills: Herbalism=%s Mining=%s  (names: %s / %s)"):format(
