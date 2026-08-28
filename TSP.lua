@@ -1931,11 +1931,21 @@ function TSP:ClusterRoute(nodes, zoneID, radius, nonblocking)
 	local diameter = radius * 2
 	--local taboo = 0
 
+	-- Return to the UI before doing any of the O(n^2) setup below. Without
+	-- this first yield, pressing a background clustering button still performs
+	-- the full distance-matrix build in the button click handler; on Classic Era
+	-- that can trip the UI watchdog with "script ran too long" before the
+	-- coroutine ever reaches its old first yield.
+	if nonblocking then
+		coroutine.yield()
+	end
+
 	-- Create a copy of the nodes[] table and use this instead of the original because we want to modify this table
 	local nodes2 = {}
 	for i = 1, numNodes do
 		nodes2[i] = nodes[i]
 		weight[i] = {} -- make weight[] a 2-dimensional table
+		if nonblocking and i % 256 == 0 then yield() end
 	end
 	local nodes = nodes2
 
@@ -1951,17 +1961,14 @@ function TSP:ClusterRoute(nodes, zoneID, radius, nonblocking)
 			w[j] = (((x2 - x)*zoneW)^2 + ((y2 - y)*zoneH)^2)^0.5 -- Calc distance between each node pair
 			weight[j][i] = true -- dummy value just to fill the lower half of the table so that tremove() will work on it
 		end
+		if nonblocking then yield() end
 	end
 
 	-- Step 2: Generate the initial metadata tables
 	for i = 1, numNodes do
 		metadata[i] = {}
 		metadata[i][1] = nodes[i]
-	end
-
-	-- ensure one yield is always called
-	if nonblocking then
-		coroutine.yield()
+		if nonblocking and i % 256 == 0 then yield() end
 	end
 
 	-- Step 5: ...and loop until there is no such pair of nodes
@@ -1979,6 +1986,7 @@ function TSP:ClusterRoute(nodes, zoneID, radius, nonblocking)
 					node2 = j
 				end
 			end
+			if nonblocking then yield() end
 		end
 		-- Step 4: Merge node2 into node1...
 		if node1 then
@@ -2034,6 +2042,7 @@ function TSP:ClusterRoute(nodes, zoneID, radius, nonblocking)
 				-- Remove node2 from the weight table
 				for i = 1, numNodes do
 					tremove(weight[i], node2) -- remove column
+					if nonblocking then yield() end
 				end
 				tremove(weight, node2) -- remove row
 				-- Update number of nodes
@@ -2043,11 +2052,13 @@ function TSP:ClusterRoute(nodes, zoneID, radius, nonblocking)
 					local coord = nodes[i]
 					local x, y = floor(coord / 10000) / 10000, (coord % 10000) / 10000
 					weight[i][node1] = (((node1x - x)*zoneW)^2 + ((node1y - y)*zoneH)^2)^0.5
+					if nonblocking then yield() end
 				end
 				for i = node1+1, numNodes do
 					local coord = nodes[i]
 					local x, y = floor(coord / 10000) / 10000, (coord % 10000) / 10000
 					weight[node1][i] = (((node1x - x)*zoneW)^2 + ((node1y - y)*zoneH)^2)^0.5
+					if nonblocking then yield() end
 				end
 			end
 		else

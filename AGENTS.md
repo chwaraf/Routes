@@ -63,6 +63,16 @@ tools/verify.sh
    branch; changes are delivered via PR to `master`. `tools/build-zip.sh`
    pushes the *current* branch — don't hardcode one.
 
+
+## Agent workflow for changes
+
+When changing addon code in Arena sessions:
+
+1. Stay on the assigned `arena/*` session branch and push only that branch.
+2. Run `tools/verify.sh` (or `bash tools/verify.sh` if the executable bit was lost) before publishing.
+3. Rebuild the committed addon package with `tools/build-zip.sh` so `dist/Routes.zip` matches the source change.
+4. Commit source/docs changes before building the zip; `tools/build-zip.sh` may create the separate dist zip commit and push the current branch.
+
 ## Client → interface number quick reference
 
 | Client | Interface |
