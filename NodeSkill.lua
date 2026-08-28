@@ -283,14 +283,14 @@ end
 ----------------------------------------------------------------
 local function RequirementColor(skill, req)
 	if type(skill) ~= "number" then
-		return "ff3333" -- no profession (or rank unknown) = cannot pick up
+		return "ffff3333" -- no profession (or rank unknown) = cannot pick up
 	end
-	if skill < req then return "ff3333" end     -- red: cannot pick up
+	if skill < req then return "ffff3333" end   -- red: cannot pick up
 	local diff = skill - req
-	if diff < 25 then return "ff8040" end       -- orange
-	if diff < 50 then return "ffff00" end       -- yellow
-	if diff < 100 then return "40cc40" end      -- green
-	return "808080"                             -- grey: no skill gain
+	if diff < 25 then return "ffff8040" end     -- orange
+	if diff < 50 then return "ffffff00" end     -- yellow
+	if diff < 100 then return "ff40cc40" end    -- green
+	return "ff808080"                           -- grey: no skill gain
 end
 
 ----------------------------------------------------------------
