@@ -10,10 +10,24 @@
 --   green  - within 100
 --   grey   - 100 or more above (no skill gain)
 --
--- The requirement comes from a static Classic Era node table (locale and
--- API independent). Nodes not in the table fall back to reading the item
--- tooltip (covers other clients and future nodes); if that also fails a
--- one-shot diagnostic is printed in chat.
+-- The requirement is looked up from static per-expansion tables covering
+-- every classic-flavored client, from Classic Era through Mists of Pandaria:
+--
+--   * NodeSkillByName   - keyed by the node's ENGLISH name. Serves the
+--     name-based data sources (Gatherer, GatherLite) on any locale.
+--   * NodeSkillByNodeID - keyed by GatherMate2's node id, so GatherMate2 gets
+--     a locale-independent fast path (its node ids are not item ids).
+--
+-- Skill gates were removed from gathering in MoP patch 5.3 (nodes can be
+-- picked at skill 1 for reduced "fragment" yield); the MoP values below are
+-- the original orange/full-yield thresholds and are colored the same way.
+-- Modern retail (Legion and later) has no numeric gathering skill at all, so
+-- no suffix is produced there.
+--
+-- Nodes not in the tables fall back to reading the requirement off the item
+-- tooltip (see GetNodeSkillSuffixFromItem), which covers item-id-based
+-- sources and future nodes; if that also fails a one-shot diagnostic is
+-- printed in chat.
 
 local Routes = LibStub("AceAddon-3.0"):GetAddon("Routes", 1)
 if not Routes then return end
@@ -22,90 +36,260 @@ local GetSpellName = C_Spell and C_Spell.GetSpellName or GetSpellInfo
 local math_floor, math_max = math.floor, math.max
 
 ----------------------------------------------------------------
--- Static Classic Era requirement tables (classic item ids / names).
+-- Static per-expansion requirement tables.
+--
+-- NodeSkillByName:  English node name -> minimum required skill.
+--   Used by the name-based data sources (Gatherer, GatherLite).
+--
+-- NodeSkillByNodeID:  GatherMate2 node id -> minimum required skill.
+--   Used by GatherMate2, which identifies nodes by its own id space
+--   (herbs 401+, ores 201+) rather than by WoW item ids.
 ----------------------------------------------------------------
-local NodeSkillByID = {
+local NodeSkillByName = {
+	-- ------------------------------------------------------------------
+	-- Classic Era (1-300)
+	-- ------------------------------------------------------------------
 	-- herbs
-	[2259] = 1,    -- Peacebloom
-	[2260] = 1,    -- Silverleaf
-	[2262] = 15,   -- Earthroot
-	[2263] = 50,   -- Mageroyal
-	[2266] = 70,   -- Briarthorn
-	[2270] = 85,   -- Stranglekelp
-	[2272] = 100,  -- Bruiseweed
-	[2276] = 115,  -- Wild Steelbloom
-	[2278] = 120,  -- Grave Moss
-	[2279] = 125,  -- Kingsblood
-	[2280] = 150,  -- Liferoot
-	[2281] = 160,  -- Fadeleaf
-	[2282] = 170,  -- Goldthorn
-	[2283] = 185,  -- Khadgar's Whisker
-	[2284] = 195,  -- Wintersbite
-	[2285] = 205,  -- Firebloom
-	[2286] = 210,  -- Purple Lotus
-	[2287] = 220,  -- Arthas' Tears
-	[2289] = 230,  -- Sungrass
-	[2290] = 235,  -- Blindweed
-	[2291] = 245,  -- Ghost Mushroom
-	[2292] = 250,  -- Gromsblood
-	[2293] = 260,  -- Golden Sansam
-	[2294] = 270,  -- Dreamfoil
-	[2295] = 280,  -- Mountain Silversage
-	[2296] = 285,  -- Plaguebloom
-	[2297] = 290,  -- Icecap
-	[2298] = 300,  -- Black Lotus
+	["Peacebloom"]          = 1,
+	["Silverleaf"]          = 1,
+	["Earthroot"]           = 15,
+	["Mageroyal"]           = 50,
+	["Briarthorn"]          = 70,
+	["Stranglekelp"]        = 85,
+	["Bruiseweed"]          = 100,
+	["Wild Steelbloom"]     = 115,
+	["Grave Moss"]          = 120,
+	["Kingsblood"]          = 125,
+	["Liferoot"]            = 150,
+	["Fadeleaf"]            = 160,
+	["Goldthorn"]           = 170,
+	["Khadgar's Whisker"]   = 185,
+	["Wintersbite"]         = 195,
+	["Firebloom"]           = 205,
+	["Purple Lotus"]        = 210,
+	["Arthas' Tears"]       = 220,
+	["Sungrass"]            = 230,
+	["Blindweed"]           = 235,
+	["Ghost Mushroom"]      = 245,
+	["Gromsblood"]          = 250,
+	["Golden Sansam"]       = 260,
+	["Dreamfoil"]           = 270,
+	["Mountain Silversage"] = 280,
+	["Plaguebloom"]         = 285,
+	["Icecap"]              = 290,
+	["Black Lotus"]         = 300,
 	-- ores
-	[2337] = 1,    -- Copper Vein
-	[2338] = 65,   -- Tin Vein
-	[2339] = 75,   -- Silver Vein
-	[2340] = 125,  -- Iron Deposit
-	[2341] = 155,  -- Gold Vein
-	[2342] = 175,  -- Mithril Deposit
-	[2345] = 195,  -- Adamite Vein
-	[2346] = 225,  -- Thorium Vein
-	[2347] = 260,  -- Khorium Vein
+	["Copper Vein"]         = 1,
+	["Tin Vein"]            = 65,
+	["Silver Vein"]         = 75,
+	["Iron Deposit"]        = 125,
+	["Gold Vein"]           = 155,
+	["Mithril Deposit"]     = 175,
+	["Truesilver Deposit"]  = 230,
+	["Small Thorium Vein"]  = 230,
+	["Rich Thorium Vein"]   = 275,
+	["Dark Iron Deposit"]   = 230,
+
+	-- ------------------------------------------------------------------
+	-- The Burning Crusade (300-375)
+	-- ------------------------------------------------------------------
+	-- herbs
+	["Felweed"]             = 300,
+	["Dreaming Glory"]      = 315,
+	["Terocone"]            = 325,
+	["Ragveil"]             = 325,
+	["Flame Cap"]           = 335,
+	["Ancient Lichen"]      = 340,
+	["Netherbloom"]         = 350,
+	["Netherdust Bush"]     = 350,
+	["Nightmare Vine"]      = 365,
+	["Mana Thistle"]        = 375,
+	-- ores
+	["Fel Iron Deposit"]    = 300,
+	["Adamantite Deposit"]  = 325,
+	["Rich Adamantite Deposit"] = 350,
+	["Nethercite Deposit"]  = 350,
+	["Khorium Vein"]        = 375,
+
+	-- ------------------------------------------------------------------
+	-- Wrath of the Lich King (350-450)
+	-- ------------------------------------------------------------------
+	-- herbs
+	["Goldclover"]          = 350,
+	["Firethorn"]           = 360,
+	["Tiger Lily"]          = 375,
+	["Talandra's Rose"]     = 385,
+	["Adder's Tongue"]      = 400,
+	["Frozen Herb"]         = 415,
+	["Lichbloom"]           = 425,
+	["Icethorn"]            = 435,
+	["Frost Lotus"]         = 450,
+	-- ores
+	["Cobalt Deposit"]      = 350,
+	["Rich Cobalt Deposit"] = 375,
+	["Saronite Deposit"]    = 400,
+	["Rich Saronite Deposit"] = 425,
+	["Pure Saronite Deposit"] = 400,
+	["Titanium Vein"]       = 450,
+
+	-- ------------------------------------------------------------------
+	-- Cataclysm (425-525)
+	-- ------------------------------------------------------------------
+	-- herbs
+	["Cinderbloom"]         = 425,
+	["Stormvine"]           = 425,
+	["Azshara's Veil"]      = 425,
+	["Heartblossom"]        = 475,
+	["Whiptail"]            = 500,
+	["Twilight Jasmine"]    = 525,
+	["Dragon's Teeth"]      = 195, -- revamped low-level zones
+	["Sorrowmoss"]          = 285, -- revamped mid-level zones
+	-- ores
+	["Obsidium Deposit"]    = 425,
+	["Rich Obsidium Deposit"] = 450,
+	["Elementium Vein"]     = 475,
+	["Rich Elementium Vein"] = 500,
+	["Pyrite Deposit"]      = 525,
+	["Rich Pyrite Deposit"] = 525,
+
+	-- ------------------------------------------------------------------
+	-- Mists of Pandaria (500-600)
+	--   Patch 5.3 removed the hard gate (everything is pickable at skill 1
+	--   for reduced "fragment" yield); these are the original orange /
+	--   full-yield thresholds.
+	-- ------------------------------------------------------------------
+	-- herbs
+	["Green Tea Leaf"]      = 500,
+	["Silkweed"]            = 500,
+	["Rain Poppy"]          = 525,
+	["Snow Lily"]           = 525,
+	["Fool's Cap"]          = 550,
+	["Sha-Touched Herb"]    = 550,
+	["Golden Lotus"]        = 600,
+	-- ores
+	["Ghost Iron Deposit"]  = 500,
+	["Rich Ghost Iron Deposit"] = 550,
+	["Kyparite Deposit"]    = 550,
+	["Rich Kyparite Deposit"] = 575,
+	["Trillium Vein"]       = 600,
+	["Rich Trillium Vein"]  = 600,
 }
 
-local NodeSkillByName = {
-	-- herbs
-	["Peacebloom"] = 1,
-	["Silverleaf"] = 1,
-	["Earthroot"] = 15,
-	["Mageroyal"] = 50,
-	["Briarthorn"] = 70,
-	["Stranglekelp"] = 85,
-	["Bruiseweed"] = 100,
-	["Wild Steelbloom"] = 115,
-	["Grave Moss"] = 120,
-	["Kingsblood"] = 125,
-	["Liferoot"] = 150,
-	["Fadeleaf"] = 160,
-	["Goldthorn"] = 170,
-	["Khadgar's Whisker"] = 185,
-	["Wintersbite"] = 195,
-	["Firebloom"] = 205,
-	["Purple Lotus"] = 210,
-	["Arthas' Tears"] = 220,
-	["Sungrass"] = 230,
-	["Blindweed"] = 235,
-	["Ghost Mushroom"] = 245,
-	["Gromsblood"] = 250,
-	["Golden Sansam"] = 260,
-	["Dreamfoil"] = 270,
-	["Mountain Silversage"] = 280,
-	["Plaguebloom"] = 285,
-	["Icecap"] = 290,
-	["Black Lotus"] = 300,
-	-- ores
-	["Copper Vein"] = 1,
-	["Tin Vein"] = 65,
-	["Silver Vein"] = 75,
-	["Iron Deposit"] = 125,
-	["Gold Vein"] = 155,
-	["Mithril Deposit"] = 175,
-	["Adamite Vein"] = 195,
-	["Thorium Vein"] = 225,
-	["Khorium Vein"] = 260,
+-- GatherMate2's node-id space. See GatherMate2/Constants.lua ("node_ids"):
+--   Mining          -> 201+ (Copper Vein 201 ... Rich Trillium Vein 248)
+--   Herb Gathering  -> 401+ (Peacebloom 401 ... Golden Lotus 462)
+local NodeSkillByNodeID = {
+	-- Classic Era - herbs
+	[401] = 1,    -- Peacebloom
+	[402] = 1,    -- Silverleaf
+	[403] = 15,   -- Earthroot
+	[404] = 50,   -- Mageroyal
+	[405] = 70,   -- Briarthorn
+	[407] = 85,   -- Stranglekelp
+	[408] = 100,  -- Bruiseweed
+	[409] = 115,  -- Wild Steelbloom
+	[410] = 120,  -- Grave Moss
+	[411] = 125,  -- Kingsblood
+	[412] = 150,  -- Liferoot
+	[413] = 160,  -- Fadeleaf
+	[414] = 170,  -- Goldthorn
+	[415] = 185,  -- Khadgar's Whisker
+	[416] = 195,  -- Wintersbite
+	[417] = 205,  -- Firebloom
+	[418] = 210,  -- Purple Lotus
+	[420] = 220,  -- Arthas' Tears
+	[421] = 230,  -- Sungrass
+	[422] = 235,  -- Blindweed
+	[423] = 245,  -- Ghost Mushroom
+	[424] = 250,  -- Gromsblood
+	[425] = 260,  -- Golden Sansam
+	[426] = 270,  -- Dreamfoil
+	[427] = 280,  -- Mountain Silversage
+	[428] = 285,  -- Plaguebloom
+	[429] = 290,  -- Icecap
+	[431] = 300,  -- Black Lotus
+	-- Classic Era - ores
+	[201] = 1,    -- Copper Vein
+	[202] = 65,   -- Tin Vein
+	[203] = 125,  -- Iron Deposit
+	[204] = 75,   -- Silver Vein
+	[205] = 155,  -- Gold Vein
+	[206] = 175,  -- Mithril Deposit
+	[207] = 175,  -- Ooze Covered Mithril Deposit
+	[208] = 230,  -- Truesilver Deposit
+	[209] = 75,   -- Ooze Covered Silver Vein
+	[210] = 155,  -- Ooze Covered Gold Vein
+	[211] = 230,  -- Ooze Covered Truesilver Deposit
+	[212] = 275,  -- Ooze Covered Rich Thorium Vein
+	[213] = 230,  -- Ooze Covered Thorium Vein
+	[214] = 230,  -- Small Thorium Vein
+	[215] = 275,  -- Rich Thorium Vein
+	[217] = 230,  -- Dark Iron Deposit
+	-- The Burning Crusade - herbs
+	[432] = 300,  -- Felweed
+	[433] = 315,  -- Dreaming Glory
+	[434] = 325,  -- Terocone
+	[435] = 340,  -- Ancient Lichen
+	[437] = 375,  -- Mana Thistle
+	[438] = 350,  -- Netherbloom
+	[439] = 365,  -- Nightmare Vine
+	[440] = 325,  -- Ragveil
+	[441] = 335,  -- Flame Cap
+	[442] = 350,  -- Netherdust Bush
+	-- The Burning Crusade - ores
+	[221] = 300,  -- Fel Iron Deposit
+	[222] = 325,  -- Adamantite Deposit
+	[223] = 350,  -- Rich Adamantite Deposit
+	[224] = 375,  -- Khorium Vein
+	[227] = 350,  -- Nethercite Deposit
+	-- Wrath of the Lich King - herbs
+	[443] = 400,  -- Adder's Tongue
+	[446] = 350,  -- Goldclover
+	[447] = 435,  -- Icethorn
+	[448] = 425,  -- Lichbloom
+	[449] = 385,  -- Talandra's Rose
+	[450] = 375,  -- Tiger Lily
+	[451] = 360,  -- Firethorn
+	[452] = 415,  -- Frozen Herb
+	[453] = 450,  -- Frost Lotus
+	-- Wrath of the Lich King - ores
+	[228] = 350,  -- Cobalt Deposit
+	[229] = 375,  -- Rich Cobalt Deposit
+	[230] = 450,  -- Titanium Vein
+	[231] = 400,  -- Saronite Deposit
+	[232] = 425,  -- Rich Saronite Deposit
+	[235] = 400,  -- Pure Saronite Deposit
+	-- Cataclysm - herbs
+	[454] = 195,  -- Dragon's Teeth (revamped low-level zones)
+	[455] = 285,  -- Sorrowmoss (revamped mid-level zones)
+	[456] = 425,  -- Azshara's Veil
+	[457] = 425,  -- Cinderbloom
+	[458] = 425,  -- Stormvine
+	[459] = 475,  -- Heartblossom
+	[460] = 525,  -- Twilight Jasmine
+	[461] = 500,  -- Whiptail
+	-- Cataclysm - ores
+	[233] = 425,  -- Obsidium Deposit
+	[236] = 475,  -- Elementium Vein
+	[237] = 500,  -- Rich Elementium Vein
+	[238] = 525,  -- Pyrite Deposit
+	[239] = 450,  -- Rich Obsidium Deposit
+	[240] = 525,  -- Rich Pyrite Deposit
+	-- Mists of Pandaria - herbs
+	[462] = 600,  -- Golden Lotus
+	[463] = 550,  -- Fool's Cap
+	[464] = 525,  -- Snow Lily
+	[465] = 500,  -- Silkweed
+	[466] = 500,  -- Green Tea Leaf
+	[467] = 525,  -- Rain Poppy
+	[468] = 550,  -- Sha-Touched Herb
+	-- Mists of Pandaria - ores
+	[241] = 500,  -- Ghost Iron Deposit
+	[242] = 550,  -- Rich Ghost Iron Deposit
+	[245] = 550,  -- Kyparite Deposit
+	[246] = 575,  -- Rich Kyparite Deposit
+	[247] = 600,  -- Trillium Vein
+	[248] = 600,  -- Rich Trillium Vein
 }
 
 ----------------------------------------------------------------
@@ -559,26 +743,46 @@ end
 ----------------------------------------------------------------
 -- Public API
 ----------------------------------------------------------------
--- Routes:GetNodeSkillSuffix(prof, itemID, nodeName)
+-- Routes:GetNodeSkillSuffix(prof, nodeID, nodeName)
 -- prof:     "Herbalism" or "Mining"
--- itemID:   the node's item id when the data source provides one
--- nodeName: the node's (English) name when the data source is name-based
+-- nodeID:   the node id when the data source provides one (GatherMate2's
+--           node-id space - NOT a WoW item id)
+-- nodeName: the node's ENGLISH name when the data source is name-based
+--           (Gatherer / GatherLite)
 -- Returns a display suffix like " - |cffff3333170|r" to append after the
 -- node count, or nil when the requirement is unknown. The number is colored
 -- against the character's own rank (red when it is below the requirement or
 -- the profession is not learned at all).
-function Routes:GetNodeSkillSuffix(prof, itemID, nodeName)
+function Routes:GetNodeSkillSuffix(prof, nodeID, nodeName)
 	if prof ~= "Herbalism" and prof ~= "Mining" then return nil end
 	RefreshProfNames()
 
 	local req
-	if type(itemID) == "number" then
-		req = NodeSkillByID[itemID]
+	if type(nodeID) == "number" then
+		req = NodeSkillByNodeID[nodeID]
 	end
 	if not req and type(nodeName) == "string" and nodeName ~= "" then
 		req = NodeSkillByName[nodeName]
 	end
-	if not req and type(itemID) == "number" and itemID > 0 then
+	if not req then return nil end
+
+	local color = RequirementColor(PlayerSkillFor(prof), req)
+	if color then
+		return (" - |c%s%d|r"):format(color, req)
+	end
+	return (" - %d"):format(req)
+end
+
+-- Item-id based variant, for data sources that hand us a real WoW item id
+-- instead of a node name or a GatherMate2 node id. Reads the requirement off
+-- the item tooltip ("Requires Herbalism (170)") rather than the static
+-- tables above.
+function Routes:GetNodeSkillSuffixFromItem(prof, itemID)
+	if prof ~= "Herbalism" and prof ~= "Mining" then return nil end
+	RefreshProfNames()
+
+	local req
+	if type(itemID) == "number" and itemID > 0 then
 		req = NodeRequiredSkill(itemID, prof)
 	end
 	if not req then return nil end
@@ -657,9 +861,9 @@ function Routes:NodeSkillDebug(itemID)
 	end
 
 	local id = itemID
-	if type(id) ~= "number" or id <= 0 then id = 2259 end -- Peacebloom (classic)
-	Routes:Print(("  item %d: table-skill=%s  suffix=%s"):format(
-		id, tostring(NodeSkillByID[id]), tostring(Routes:GetNodeSkillSuffix("Herbalism", id))))
+	if type(id) ~= "number" or id <= 0 then id = 2447 end -- Peacebloom (item id)
+	Routes:Print(("  item %d: static-by-name=%s  tooltip-suffix=%s"):format(
+		id, tostring(NodeSkillByName["Peacebloom"]), tostring(Routes:GetNodeSkillSuffixFromItem("Herbalism", id))))
 
 	-- probe one REAL node from the player's zone, straight from the data
 	-- source, so the pasted line covers the actual list entries too

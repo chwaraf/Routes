@@ -41,12 +41,39 @@ local translate_db_type = {
 	["Archaeology"] = "Archaeology",
 	["Logging"] = "Logging",
 }
+-- GatherMate2 identifies nodes by its own node-id space, and GetNameForNode
+-- returns the client-locale name. Resolve the ENGLISH name from
+-- GatherMate2.nodeIDs (keyed by English name -> node id) so the name-based
+-- skill table works on any locale as a second path alongside the node-id
+-- table (which stays correct even if a future GatherMate2 renumbers nodes).
+local english_node_cache = {}
+local function english_node_name(db_type, node)
+	local ids = GatherMate2.nodeIDs and GatherMate2.nodeIDs[db_type]
+	if not ids then return nil end
+	local cache = english_node_cache[db_type]
+	if not cache then
+		cache = {}
+		english_node_cache[db_type] = cache
+	end
+	if cache[node] ~= nil then
+		return cache[node] or nil
+	end
+	for name, id in pairs(ids) do
+		if id == node then
+			cache[node] = name
+			return name
+		end
+	end
+	cache[node] = false
+	return nil
+end
+
 -- herb and mining nodes get their minimum required skill appended to the
 -- name, colored against the player's own profession skill
 local function node_skill_suffix(db_type, node, nodeName)
 	local prof = translate_db_type[db_type]
 	if (prof == "Herbalism" or prof == "Mining") and Routes.GetNodeSkillSuffix then
-		return Routes:GetNodeSkillSuffix(prof, node, nodeName)
+		return Routes:GetNodeSkillSuffix(prof, node, english_node_name(db_type, node) or nodeName)
 	end
 	return nil
 end
