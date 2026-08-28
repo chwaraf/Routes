@@ -1,4 +1,4 @@
-﻿--[[
+--[[
 ********************************************************************************
 Routes
 @project-version@
@@ -63,6 +63,7 @@ Contact:
 Routes = LibStub("AceAddon-3.0"):NewAddon("Routes", "AceConsole-3.0", "AceEvent-3.0", "AceHook-3.0")
 local Routes = Routes
 local L   = LibStub("AceLocale-3.0"):GetLocale("Routes", false)
+Routes.L = L -- used by the error handlers in TSP.lua
 local G = {} -- was Graph-1.0, but we removed the dependency
 Routes.G = G
 Routes.Dragons = LibStub("HereBeDragons-2.0")
@@ -120,6 +121,10 @@ local defaults = {
 			draw_battlemap  = true,
 			draw_indoors    = false,
 			tsp = {
+				algorithm          = "lk",  -- Solver: "lk", "ils" or "aco". See TSP.lua.
+				ils_effort         = 3,     -- lk/ils: 1-10, how long to keep improving the route
+				annealing          = true,  -- lk/ils: accept uphill moves on a cooling schedule
+				-- The rest are ACO only, and are ignored by the local search solvers
 				initial_pheromone  = 0.1,   -- Initial pheromone trail value
 				alpha              = 1,     -- Likelihood of ants to follow pheromone trails (larger value == more likely)
 				beta               = 6,     -- Likelihood of ants to choose closer nodes (larger value == more likely)
@@ -207,6 +212,31 @@ end
 Routes.GetZoneName = GetZoneName
 
 Routes.LZName = setmetatable({}, { __index = function() return 0 end})
+
+-- Return the localized zone name for a uiMapID, but only if routes can
+-- actually be stored for it (i.e. it made it into LZName).
+local function ZoneNameForMap(mapID)
+	if not mapID then return nil end
+	local name = GetZoneName(mapID)
+	if name and Routes.LZName[name] then return name end
+	return nil
+end
+
+-- The zone the player is currently standing in, for use as the default zone
+-- when creating routes and taboo regions. If the player is inside a dungeon
+-- or micro dungeon, the containing overworld zone is used instead, since
+-- gathering routes live in the open world.
+local function GetPlayerRouteZone()
+	local mapID = Routes.Dragons:GetPlayerZone()
+	if mapID then
+		local data = Routes.Dragons.mapData and Routes.Dragons.mapData[mapID]
+		if data and Enum and Enum.UIMapType
+			and (data.mapType == Enum.UIMapType.Dungeon or data.mapType == Enum.UIMapType.Micro) then
+			mapID = data.parent
+		end
+	end
+	return ZoneNameForMap(mapID)
+end
 
 local COSMIC_MAP_ID = 946
 local WORLD_MAP_ID = 947
@@ -349,7 +379,7 @@ local function is_round( dx, dy )
 
 	local q = 1
 	if dx > 0 then q = q + 2 end -- right side
-	-- XXX Tripple check this
+	-- Minimap quadrant lookup for non-round minimap masks
 	if dy > 0 then q = q + 1 end -- bottom side
 
 	return MinimapShapes[map_shape][q]
@@ -397,6 +427,35 @@ local XY_cache_mt = {
 
 setmetatable( X_cache, XY_cache_mt )
 setmetatable( Y_cache, XY_cache_mt )
+
+-- Precomputed world-space coordinates for each route's points, so the
+-- per-frame minimap loop skips a string allocation + two hash lookups per
+-- point. On Classic that allocation churn on every redraw is meaningful GC
+-- pressure (random frame spikes). Weak keys: entries vanish with the route
+-- table; also cleared explicitly from every place that mutates a route
+-- (Routes.ClearRouteDescCache).
+local route_points_cache = setmetatable({}, { __mode = "k" })
+local function GetRoutePoints(route_data, zoneID)
+	local cached = route_points_cache[route_data]
+	if cached then return cached end
+	local route = route_data.route
+	local n = #route
+	local fake_point = db.defaults.fake_point
+	local pts = {}
+	for i = 1, n do
+		local point = route[i]
+		if point ~= fake_point then
+			local key = zoneID .. ";" .. point
+			local X = X_cache[key]
+			local Y = Y_cache[key]
+			if X and Y then
+				pts[i] = { X, Y }
+			end
+		end
+	end
+	route_points_cache[route_data] = pts
+	return pts
+end
 
 function Routes:DrawMinimapLines(forceUpdate)
 	if not db.defaults.draw_minimap then
@@ -490,10 +549,14 @@ function Routes:DrawMinimapLines(forceUpdate)
 				local last_y = nil
 				local last_inside = nil
 
+				local pts = GetRoutePoints(route_data, currentZoneID)
+
 				-- if we loop - make sure the 'last' gets filled with the right info
 				if route_data.looped and route_data.route[ #route_data.route ] ~= defaults.fake_point then
-					local key = format("%s;%s", currentZoneID, route_data.route[ #route_data.route ])
-					last_x, last_y = X_cache[key], Y_cache[key]
+					local p = pts[ #route_data.route ]
+					if p then
+						last_x, last_y = p[1], p[2]
+					end
 					if minimap_rotate then
 						local dx = last_x - cx
 						local dy = last_y - cy
@@ -502,7 +565,6 @@ function Routes:DrawMinimapLines(forceUpdate)
 					end
 					last_inside = is_inside( last_x, last_y, cx, cy, radius )
 				end
-
 				-- loop over the route
 				for i = 1, #route_data.route do
 					local point = route_data.route[i]
@@ -514,8 +576,10 @@ function Routes:DrawMinimapLines(forceUpdate)
 						cur_y = nil
 						cur_inside = false
 					else
-						local key = format("%s;%s", currentZoneID, point)
-						cur_x, cur_y = X_cache[key], Y_cache[key]
+						local p = pts[i]
+						if p then
+							cur_x, cur_y = p[1], p[2]
+						end
 						if minimap_rotate then
 							local dx = cur_x - cx
 							local dy = cur_y - cy
@@ -787,6 +851,7 @@ end)
 -- for inserting into relevant routes
 -- Zone name must be localized, node_name can be english or localized
 function Routes:InsertNode(zone, coord, node_name)
+	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	for route_name, route_data in pairs( db.routes[ self.LZName[zone] ] ) do
 		-- for every route check if the route is created with this node
 		if route_data.selection then
@@ -817,6 +882,7 @@ end
 -- for deleting into relevant routes
 -- Zone name must be localized, node_name can be english or localized
 function Routes:DeleteNode(zone, coord, node_name)
+	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	for route_name, route_data in pairs( db.routes[ self.LZName[zone] ] ) do
 		-- for every route check if the route is created with this node
 		if route_data.selection then
@@ -984,6 +1050,14 @@ local function ChatCommand(input)
 	if not input or input:trim() == "" then
 		LibStub("AceConfigDialog-3.0"):Open("Routes")
 	else
+		-- /routes skilldebug [itemID] - report node skill lookup diagnostics
+		local cmd = input:trim():lower()
+		if cmd == "skilldebug" or cmd:find("^skilldebug%s") then
+			if Routes.NodeSkillDebug then
+				Routes:NodeSkillDebug(tonumber(cmd:match("^skilldebug%s+(%d+)$")))
+			end
+			return
+		end
 		LibStub("AceConfigCmd-3.0").HandleCommand(Routes, "routes", "Routes", input)
 	end
 end
@@ -1068,8 +1142,11 @@ timerFrame:Hide()
 timerFrame.elapsed = 0
 timerFrame:SetScript("OnUpdate", function(self, elapsed)
 	self.elapsed = self.elapsed + elapsed
-	if self.elapsed > 0.025 or self.force then -- throttle to a max of 40 redraws per sec
-		self.elapsed = 0                       -- kinda unnecessary since at default 1 yard refresh, its limited to 36 redraws/sec
+	if self.elapsed > 0.05 or self.force then -- throttle to a max of 20 redraws per sec: route
+		self.elapsed = 0                       -- lines are static in world space, 20fps is visually
+		                                       -- indistinguishable while moving and halves the
+		                                       -- per-frame drawing cost that can crowd another
+		                                       -- UI frame (e.g. the options Open) over budget
 		Routes:DrawMinimapLines(self.force)    -- only need 25 redraws/sec to perceive smooth motion anyway
 		self.force = nil
 	end
@@ -1753,6 +1830,7 @@ end
 function ConfigHandler:DeleteRoute(info)
 	local zone = tonumber(info[2])
 	local zoneKey = info[2]
+	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	local routekey = info[3]
 	local route = Routes.routekeys[zone][routekey]
 	local is_running, route_table = Routes.TSP:IsTSPRunning()
@@ -1776,6 +1854,7 @@ end
 function ConfigHandler:RecreateRoute(info)
 	local zone = tonumber(info[2])
 	local routekey = info[3]
+	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	local route = Routes.routekeys[zone][routekey]
 	local is_running, route_table = Routes.TSP:IsTSPRunning()
 	if is_running and route_table == db.routes[zone][route].route then
@@ -1788,16 +1867,15 @@ function ConfigHandler:RecreateRoute(info)
 end
 
 function ConfigHandler:ClusterRoute(info)
-	local zone = tonumber(info[2])
-	local route = Routes.routekeys[zone][ info[3] ]
-	local t = db.routes[zone][route]
-	t.route, t.metadata, t.length = Routes.TSP:ClusterRoute(db.routes[zone][route].route, zone, db.defaults.cluster_dist)
-	t.cluster_dist = db.defaults.cluster_dist
-	Routes:DrawWorldmapLines()
-	Routes:DrawMinimapLines(true)
+	-- Chunked via the same coroutine machinery as the Background button:
+	-- the synchronous O(n^2) clustering pass on a big route outruns the UI
+	-- watchdog ("script ran too long") on some clients, while the chunked
+	-- run never can. `true` marks it as a foreground run so the chat
+	-- messages match the button that was actually clicked.
+	ConfigHandler:ClusterRouteBackground(info, true)
 end
 
-function ConfigHandler:ClusterRouteBackground(info)
+function ConfigHandler:ClusterRouteBackground(info, foreground)
 	local zone = tonumber(info[2])
 	local route = Routes.routekeys[zone][ info[3] ]
 	local t = db.routes[zone][route]
@@ -1806,7 +1884,9 @@ function ConfigHandler:ClusterRouteBackground(info)
 		t.route, t.metadata, t.length = route, metadata, length
 
 		t.cluster_dist = db.defaults.cluster_dist
-		Routes:Print(L["Background Route Clustering completed."])
+			Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
+		Routes:Print(foreground and L["Route Clustering completed."]
+			or L["Background Route Clustering completed."])
 
 		-- redraw lines
 		local AutoShow = Routes:GetModule("AutoShow", true)
@@ -1819,14 +1899,33 @@ function ConfigHandler:ClusterRouteBackground(info)
 		LibStub("AceConfigRegistry-3.0"):NotifyChange("Routes")
 	end
 
-	Routes:Print(L["Now running route clustering in the background..."])
-	Routes.TSP:ClusterRouteBackground(db.routes[zone][route].route, zone, db.defaults.cluster_dist, callbackClusterFinished)
+	local running, errormsg = Routes.TSP:ClusterRouteBackground(db.routes[zone][route].route, zone, db.defaults.cluster_dist, callbackClusterFinished)
+	if running == 1 then
+		Routes:Print(foreground and L["Now clustering the route; the game stays responsive while it runs..."]
+			or L["Now running route clustering in the background..."])
+	elseif running == 2 then
+		-- A TSP or another clustering job is running; the previous
+		-- "Now clustering..." would otherwise have claimed a start that
+		-- never happened.
+		Routes:Print(L["There is already a TSP running in background. Wait for it to complete first."])
+	elseif running == 3 then
+		Routes:Print(L["The following error occured in the background clustering coroutine, please report to Grum or Xinhuan:"])
+		Routes:Print(errormsg)
+	end
 end
 
 function ConfigHandler:UnClusterRoute(info)
 	local zone = tonumber(info[2])
 	local route = Routes.routekeys[zone][ info[3] ]
 	local t = db.routes[zone][route]
+	-- A clustering job that started earlier would overwrite this route when
+	-- it finishes, silently re-applying the cluster we are about to remove.
+	local is_running, route_table = Routes.TSP:IsTSPRunning()
+	if is_running and route_table == t.route then
+		Routes:Print(L["There is already a TSP running in background. Wait for it to complete first."])
+		return
+	end
+	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	local num = 0
 	for i = 1, #t.metadata do
 		for j = 1, #t.metadata[i] do
@@ -1906,11 +2005,36 @@ end
 
 do
 	local str = {}
-	function ConfigHandler.GetDataDesc(info)
+	local data = {}
+	-- The descriptions below are re-evaluated by AceConfig every time a route
+	-- tab is fed, and the cluster histogram walks every node of the route.
+	-- For a big route that is wasted work on every dialog open, so the texts
+	-- are cached per route table, keyed by a cheap signature of the route's
+	-- shape. The cache is weak (entries vanish with the route table) and is
+	-- wiped from every place that mutates a route.
+	local descCache = setmetatable({}, { __mode = "k" })
+	function Routes.ClearRouteDescCache()
+		for k in pairs(descCache) do descCache[k] = nil end
+		for k in pairs(route_points_cache) do route_points_cache[k] = nil end
+	end
+
+	local function CountKeys(tbl)
+		local n = 0
+		for _ in pairs(tbl) do n = n + 1 end
+		return n
+	end
+
+	local function DescSig(t)
+		return (#t.route) .. ":" .. tostring(t.cluster_dist or 0) .. ":" ..
+			#(t.metadata or {}) .. ":" .. CountKeys(t.taboos or {}) .. ":" ..
+			#(t.taboolist or {}) .. ":" .. CountKeys(t.db_type or {}) .. ":" ..
+			CountKeys(t.selection or {})
+	end
+
+	local function ComputeDescs(t, zone)
+		local out = {}
+		-- data desc
 		wipe(str)
-		local zone = tonumber(info[2])
-		local route = Routes.routekeys[zone][ info[3] ]
-		local t = db.routes[zone][route]
 		local num = 1
 		str[num] = L["This route has nodes that belong to the following categories:"]
 		for k in pairs(t.db_type) do
@@ -1924,50 +2048,39 @@ do
 			if v == true then v = k end
 			str[num] = "|cffffd200     "..v.."|r"
 		end
-		return table.concat(str, "\n")
-	end
-
-	local data = {}
-	function ConfigHandler.GetClusterDesc(info)
-		wipe(str)
-		wipe(data)
-		local zone = tonumber(info[2])
-		local route = Routes.routekeys[zone][ info[3] ]
-		local t = db.routes[zone][route]
+		out.data = table.concat(str, "\n")
+		-- cluster desc
 		if not t.metadata then
-			return L["This route is not a clustered route."]
-		end
-
-		local numNodes = 0
-		local maxt = 0
-		local zoneW, zoneH = Routes.Dragons:GetZoneSize(zone)
-		for i = 1, #t.metadata do
-			local numData = #t.metadata[i]
-			numNodes = numNodes + numData
-			local x, y = floor(t.route[i] / 10000) / 10000, (t.route[i] % 10000) / 10000
-			for j = 1, numData do
-				local x2, y2 = floor(t.metadata[i][j] / 10000) / 10000, (t.metadata[i][j] % 10000) / 10000 -- to round off the coordinate
-				local t = (((x2 - x)*zoneW)^2 + ((y2 - y)*zoneH)^2)^0.5 - 0.0001
-				t = floor(t / 10)
-				data[t] = (data[t] or 0) + 1
-				if t > maxt then maxt = t end
+			out.cluster = L["This route is not a clustered route."]
+		else
+			wipe(str)
+			wipe(data)
+			local numNodes = 0
+			local maxt = 0
+			local zoneW, zoneH = Routes.Dragons:GetZoneSize(zone)
+			for i = 1, #t.metadata do
+				local numData = #t.metadata[i]
+				numNodes = numNodes + numData
+				local x, y = floor(t.route[i] / 10000) / 10000, (t.route[i] % 10000) / 10000
+				for j = 1, numData do
+					local x2, y2 = floor(t.metadata[i][j] / 10000) / 10000, (t.metadata[i][j] % 10000) / 10000 -- to round off the coordinate
+					local d = (((x2 - x)*zoneW)^2 + ((y2 - y)*zoneH)^2)^0.5 - 0.0001
+					d = floor(d / 10)
+					data[d] = (data[d] or 0) + 1
+					if d > maxt then maxt = d end
+				end
 			end
+			for i = 0, maxt do
+				str[i+4] = L["|cffffd200     %d|r node(s) are between |cffffd200%d|r-|cffffd200%d|r yards of a cluster point"]:format(data[i] or 0, i*10+1, i*10+10)
+			end
+			str[1] = L["This route is a clustered route, down from the original |cffffd200%d|r nodes."]:format(numNodes)
+			str[2] = L["The cluster radius of this route is |cffffd200%d|r yards."]:format(t.cluster_dist or 65) -- 65 was an old default
+			str[3] = L["|cffffd200     %d|r node(s) are at |cffffd2000|r yards of a cluster point"]:format(data[-1] or 0)
+			out.cluster = table.concat(str, "\n")
 		end
-		for i = 0, maxt do
-			str[i+4] = L["|cffffd200     %d|r node(s) are between |cffffd200%d|r-|cffffd200%d|r yards of a cluster point"]:format(data[i] or 0, i*10+1, i*10+10)
-		end
-		str[1] = L["This route is a clustered route, down from the original |cffffd200%d|r nodes."]:format(numNodes)
-		str[2] = L["The cluster radius of this route is |cffffd200%d|r yards."]:format(t.cluster_dist or 65) -- 65 was an old default
-		str[3] = L["|cffffd200     %d|r node(s) are at |cffffd2000|r yards of a cluster point"]:format(data[-1] or 0)
-		return table.concat(str, "\n")
-	end
-
-	function ConfigHandler.GetTabooDesc(info)
+		-- taboo desc
 		wipe(str)
-		local zone = tonumber(info[2])
-		local route = Routes.routekeys[zone][ info[3] ]
-		local t = db.routes[zone][route]
-		local num = 1
+		num = 1
 		str[num] = L["This route has the following taboo regions:"]
 		for k, v in pairs(t.taboos) do
 			if v then
@@ -1982,7 +2095,38 @@ do
 		end
 		num = num + 1
 		str[num] = L["This route contains |cffffd200%d|r nodes that have been tabooed."]:format(#t.taboolist)
-		return table.concat(str, "\n")
+		out.taboo = table.concat(str, "\n")
+		return out
+	end
+
+	local function GetRouteDescs(t, zone)
+		local sig = DescSig(t)
+		local c = descCache[t]
+		if c and c.sig == sig then return c end
+		c = { sig = sig, out = ComputeDescs(t, zone) }
+		descCache[t] = c
+		return c
+	end
+
+	function ConfigHandler.GetDataDesc(info)
+		local zone = tonumber(info[2])
+		local route = Routes.routekeys[zone][ info[3] ]
+		local t = db.routes[zone][route]
+		return GetRouteDescs(t, zone).out.data
+	end
+
+	function ConfigHandler.GetClusterDesc(info)
+		local zone = tonumber(info[2])
+		local route = Routes.routekeys[zone][ info[3] ]
+		local t = db.routes[zone][route]
+		return GetRouteDescs(t, zone).out.cluster
+	end
+
+	function ConfigHandler.GetTabooDesc(info)
+		local zone = tonumber(info[2])
+		local route = Routes.routekeys[zone][ info[3] ]
+		local t = db.routes[zone][route]
+		return GetRouteDescs(t, zone).out.taboo
 	end
 end
 
@@ -1993,26 +2137,45 @@ function ConfigHandler:SetTwoPointFiveOpt(info, v)
 	db.defaults.tsp.two_point_five_opt = v
 end
 
-function ConfigHandler:DoForeground(info)
-	local zone = tonumber(info[2])
-	local route = Routes.routekeys[zone][ info[3] ]
-	local t = db.routes[zone][route]
-	if #t.route > 724 then
-		-- Lua has 4mb limit on table size. 725x725 will result in a table of size 525625
-		-- 524288 (or 2^19) is the max as 8 bytes per entry will give exactly 4 Mb
-		Routes:Print(L["TOO_MANY_NODES_ERROR"])
-		return
-	end
-	local taboos = {}
-	for tabooname, used in pairs(t.taboos) do
-		if used then
-			tinsert(taboos, db.taboo[zone][tabooname])
-		end
-	end
-	local output, meta, length, iter, timetaken = Routes.TSP:SolveTSP(t.route, t.metadata, taboos, zone, db.defaults.tsp)
+function ConfigHandler:GetAlgorithm()
+	return db.defaults.tsp.algorithm
+end
+function ConfigHandler:SetAlgorithm(info, v)
+	db.defaults.tsp.algorithm = v
+end
+function ConfigHandler:GetIlsEffort()
+	return db.defaults.tsp.ils_effort
+end
+function ConfigHandler:SetIlsEffort(info, v)
+	db.defaults.tsp.ils_effort = v
+end
+function ConfigHandler:GetAnnealing()
+	return db.defaults.tsp.annealing
+end
+function ConfigHandler:SetAnnealing(info, v)
+	db.defaults.tsp.annealing = v
+end
+-- The ACO solver builds an NxN matrix and so has a hard node ceiling; the local
+-- search solvers keep k neighbours per node and do not. Both the 2.5-opt toggle
+-- and the ceiling therefore only apply while ACO is selected.
+function ConfigHandler:IsNotACO()
+	return db.defaults.tsp.algorithm ~= "aco"
+end
+-- Effort and annealing belong to the local search solvers, not to ACO
+function ConfigHandler:IsACO()
+	return db.defaults.tsp.algorithm == "aco"
+end
+
+local function RefreshRoutesOptions()
+	LibStub("AceConfigRegistry-3.0"):NotifyChange("Routes")
+end
+
+-- Shared completion handling for the Foreground/Background optimize buttons.
+local function ApplyOptimizedRoute(t, output, meta, length, iter, timetaken)
 	t.route = output
 	t.length = length
 	t.metadata = meta
+	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	Routes:Print(L["Path with %d nodes found with length %.2f yards after %d iterations in %.2f seconds."]:format(#output, length, iter, timetaken))
 
 	-- redraw lines
@@ -2022,13 +2185,56 @@ function ConfigHandler:DoForeground(info)
 	end
 	Routes:DrawWorldmapLines()
 	Routes:DrawMinimapLines(true)
+
+	-- Re-feed the open AceConfig route tab after asynchronous work changes the
+	-- route shape. In particular, Cluster + Optimize sets t.metadata during the
+	-- cluster stage; without NotifyChange the Cluster button can remain visible
+	-- until the user closes and reopens the addon.
+	RefreshRoutesOptions()
+end
+
+function ConfigHandler:DoForeground(info)
+	local zone = tonumber(info[2])
+	local route = Routes.routekeys[zone][ info[3] ]
+	local t = db.routes[zone][route]
+	if db.defaults.tsp.algorithm == "aco" and #t.route > 724 then
+		-- Lua has 4mb limit on table size. 725x725 will result in a table of size 525625
+		-- 524288 (or 2^19) is the max as 8 bytes per entry will give exactly 4 Mb
+		-- The local search solvers have no NxN matrix, so this limit does not apply to them.
+		Routes:Print(L["TOO_MANY_NODES_ERROR"])
+		return
+	end
+	local taboos = {}
+	for tabooname, used in pairs(t.taboos) do
+		if used then
+			tinsert(taboos, db.taboo[zone][tabooname])
+		end
+	end
+	-- Run through the same chunked (coroutine) machinery as the Background
+	-- button: a single blocking call on a big route outruns the UI watchdog
+	-- ("script ran too long") on some clients, while the chunked run never
+	-- can - each OnUpdate slice is only a few milliseconds, the UI stays
+	-- responsive, and the result lands a moment later.
+	local running, errormsg = Routes.TSP:SolveTSPBackground(t.route, t.metadata, taboos, zone, db.defaults.tsp)
+	if (running == 1) then
+		Routes:Print(L["Now optimizing the route; the game stays responsive while it runs..."])
+		Routes.TSP:SetFinishFunction(function(output, meta, length, iter, timetaken)
+			ApplyOptimizedRoute(t, output, meta, length, iter, timetaken)
+		end)
+	elseif (running == 2) then
+		Routes:Print(L["There is already a TSP running in background. Wait for it to complete first."])
+	elseif (running == 3) then
+		Routes:Print(L["The following error occured in the background path generation coroutine, please report to Grum or Xinhuan:"])
+		Routes:Print(errormsg)
+	end
 end
 
 function ConfigHandler:DoBackground(info)
 	local zone = tonumber(info[2])
 	local route = Routes.routekeys[zone][ info[3] ]
 	local t = db.routes[zone][route]
-	if #t.route > 724 then
+	if db.defaults.tsp.algorithm == "aco" and #t.route > 724 then
+		-- ACO only; see the note in DoForeground()
 		Routes:Print(L["TOO_MANY_NODES_ERROR"])
 		return
 	end
@@ -2056,22 +2262,11 @@ function ConfigHandler:DoBackground(info)
 			end
 		end)
 		Routes.TSP:SetFinishFunction(function(output, meta, length, iter, timetaken)
-			t.route = output
-			t.length = length
-			t.metadata = meta
-			local msg = L["Path with %d nodes found with length %.2f yards after %d iterations in %.2f seconds."]:format(#output, length, iter, timetaken)
-			Routes:Print(msg)
+			ApplyOptimizedRoute(t, output, meta, length, iter, timetaken)
 			local frame = LibStub("AceConfigDialog-3.0").OpenFrames["Routes"]
 			if frame then
-				frame:SetStatusText(msg)
+				frame:SetStatusText(L["Path with %d nodes found with length %.2f yards after %d iterations in %.2f seconds."]:format(#output, length, iter, timetaken))
 			end
-			-- redraw lines
-			local AutoShow = Routes:GetModule("AutoShow", true)
-			if AutoShow and db.defaults.use_auto_showhide then
-				AutoShow:ApplyVisibility()
-			end
-			Routes:DrawWorldmapLines()
-			Routes:DrawMinimapLines(true)
 		end)
 	elseif (running == 2) then
 		Routes:Print(L["There is already a TSP running in background. Wait for it to complete first."])
@@ -2079,6 +2274,64 @@ function ConfigHandler:DoBackground(info)
 		-- This should never happen, but is here as a fallback
 		Routes:Print(L["The following error occured in the background path generation coroutine, please report to Grum or Xinhuan:"]);
 		Routes:Print(errormsg);
+	end
+end
+
+-- Cluster, then optimize, as one operation. Clustering runs FIRST because it
+-- shrinks the route (nodes -> cluster points), so the optimizer then solves a
+-- much smaller problem for essentially the same result. The two jobs run one
+-- after the other on the shared background lock: stage two is started from
+-- stage one's finish callback, which only runs after the lock is released.
+function ConfigHandler:ClusterAndOptimize(info)
+	local zone = tonumber(info[2])
+	local route = Routes.routekeys[zone][ info[3] ]
+	local t = db.routes[zone][route]
+
+	local function startOptimize()
+		if db.defaults.tsp.algorithm == "aco" and #t.route > 724 then
+			-- ACO only; see the note in DoForeground()
+			Routes:Print(L["TOO_MANY_NODES_ERROR"])
+			return
+		end
+		local taboos = {}
+		for tabooname, used in pairs(t.taboos) do
+			if used then
+				tinsert(taboos, db.taboo[zone][tabooname])
+			end
+		end
+		local running, errormsg = Routes.TSP:SolveTSPBackground(t.route, t.metadata, taboos, zone, db.defaults.tsp)
+		if running == 1 then
+			Routes:Print(L["Now optimizing the clustered route; the game stays responsive while it runs..."])
+			Routes.TSP:SetFinishFunction(function(output, meta, length, iter, timetaken)
+				ApplyOptimizedRoute(t, output, meta, length, iter, timetaken)
+			end)
+		elseif running == 2 then
+			-- The lock was just released by the clustering job; this is only
+			-- possible if something else started in the meantime.
+			Routes:Print(L["There is already a TSP running in background. Wait for it to complete first."])
+		elseif running == 3 then
+			Routes:Print(L["The following error occured in the background path generation coroutine, please report to Grum or Xinhuan:"])
+			Routes:Print(errormsg)
+		end
+	end
+
+	local function clusterFinished(clusters, metadata, length)
+		t.route, t.metadata, t.length = clusters, metadata, length
+		t.cluster_dist = db.defaults.cluster_dist
+		Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
+		RefreshRoutesOptions()
+		Routes:Print(L["Clustering done, now optimizing the cluster points..."])
+		startOptimize()
+	end
+
+	local running, errormsg = Routes.TSP:ClusterRouteBackground(t.route, zone, db.defaults.cluster_dist, clusterFinished)
+	if running == 1 then
+		Routes:Print(L["Now clustering the route; it will be optimized automatically when clustering finishes."])
+	elseif running == 2 then
+		Routes:Print(L["There is already a TSP running in background. Wait for it to complete first."])
+	elseif running == 3 then
+		Routes:Print(L["The following error occured in the background clustering coroutine, please report to Grum or Xinhuan:"])
+		Routes:Print(errormsg)
 	end
 end
 
@@ -2309,6 +2562,14 @@ do
 						disabled = "IsCluster",
 						order = 72,
 					},
+					cluster_optimize = {
+						name = L["Cluster + Optimize"], type = "execute",
+						desc = L["Cluster + Optimize Desc"],
+						func = "ClusterAndOptimize",
+						hidden = "IsCluster",
+						disabled = "IsCluster",
+						order = 73,
+					},
 					uncluster = {
 						name = L["Uncluster"], type = "execute",
 						desc = L["Uncluster this route"],
@@ -2322,11 +2583,55 @@ do
 						name = L["Route Optimizing"],
 						order = 100,
 					},
+					algorithm_group = {
+						type = "group",
+						order = 110,
+						name = L["Algorithm"],
+						inline = true,
+						args = {
+							algorithm_disc = {
+								name = L["AlgorithmDesc"], type = "description",
+								order = 0,
+							},
+							algorithm = {
+								name = L["Algorithm"], type = "select",
+								desc = L["AlgorithmDesc"],
+								values = {
+									lk = L["Lin-Kernighan"],
+									ils = L["2-opt / Or-opt"],
+									aco = L["Ant Colony (legacy)"],
+								},
+								sorting = { "lk", "ils", "aco" },
+								get = "GetAlgorithm", set = "SetAlgorithm",
+								disabled = false, -- to avoid inheriting from parent, so we don't have to use an arg= field
+								order = 100,
+							},
+							ils_effort = {
+								name = L["Optimization effort"], type = "range",
+								desc = L["EffortDesc"],
+								min = 1, max = 10, step = 1,
+								get = "GetIlsEffort", set = "SetIlsEffort",
+								hidden = "IsACO",
+								disabled = false,
+								order = 200,
+							},
+							annealing = {
+								name = L["Simulated annealing"], type = "toggle",
+								desc = L["AnnealingDesc"],
+								get = "GetAnnealing", set = "SetAnnealing",
+								hidden = "IsACO",
+								disabled = false,
+								width = "full",
+								order = 300,
+							},
+						},
+					},
 					two_point_five_group = {
 						type = "group",
 						order = 150,
 						name = L["Extra optimization"],
 						inline = true,
+						hidden = "IsNotACO", -- ILS gets this from Or-opt already
 						args = {
 							two_point_five_opt_disc = {
 								name = L["ExtraOptDesc"], type = "description",
@@ -2469,26 +2774,34 @@ do
 
 	local function get_source_values(info)
 		if not create_zone then return empty_table end
-		local create_data = create_data[info.arg]
-		if last_zone[info.arg] == create_zone then return create_data end
+		-- Refresh the profession rank state once per list open: if it became
+		-- available since the last build, the change hook drops last_zone and
+		-- the list below is rebuilt with colored skill numbers.
+		if Routes.RefreshNodeSkills then Routes:RefreshNodeSkills() end
+		local data = create_data[info.arg]
+		if not data then
+			data = {}
+			create_data[info.arg] = data
+		end
+		if last_zone[info.arg] == create_zone then return data end
 		-- reuse table
-		wipe(create_data)
+		wipe(data)
 		-- extract data from plugin
 		if Routes.plugins[info.arg].IsActive() then
-			Routes.plugins[info.arg].Summarize(create_data, create_zone)
+			Routes.plugins[info.arg].Summarize(data, create_zone)
 		end
 		-- found no data - insert dummy message
-		if not next(create_data) then
-			create_data[ db.defaults.fake_data ..";;;" ] = L["No data found"]
+		if not next(data) then
+			data[ db.defaults.fake_data ..";;;" ] = L["No data found"]
 		end
 		last_zone[info.arg] = create_zone
 		-- Remove invalid entries due to updated data so we don't pairs over it during route creation
 		if create_choices[create_zone] then
 			for k in pairs(create_choices[create_zone]) do
-				if not create_data[k] then create_choices[create_zone][k] = nil end
+				if not data[k] then create_choices[create_zone][k] = nil end
 			end
 		end
-		return create_data
+		return data
 	end
 
 	local function get_source_value(info, key)
@@ -2506,6 +2819,22 @@ do
 		create_choices[create_zone][key] = value
 		--Routes:Print(("Setting choice: %s to %s"):format(key or "nil", value and "true" or "false"));
 	end
+	-- The node skill suffix baked into the list strings above depends on the
+	-- character's profession rank, which can become available (or change)
+	-- after the first dropdown open -- e.g. professions not yet loaded when
+	-- the list was first built. NodeSkill.lua calls this hook when a rank
+	-- appears, disappears or changes, so the per-zone cache is dropped and
+	-- the next open rebuilds the strings.
+	function Routes.OnNodeSkillChanged()
+		-- Drop the "which zone was built" marker (forces a rebuild on the
+		-- next open) and the selection state. NOTE: the create_data tables
+		-- themselves are reusable buffers owned by SetupSourcesOptTables --
+		-- get_source_values wipes their CONTENT, never the tables.
+		for k in pairs(last_zone) do last_zone[k] = nil end
+		for k in pairs(create_choices) do create_choices[k] = nil end
+		LibStub("AceConfigRegistry-3.0"):NotifyChange("Routes")
+	end
+
 
 	function Routes:SetupSourcesOptTables()
 		-- reuse table
@@ -2562,10 +2891,16 @@ do
 			end,
 			get = function()
 				if create_zone then return create_zone end
-				-- Use currently viewed map on first view.
-				local mapID = WorldMapFrame:GetMapID()
-				if not mapID then return nil end
-				create_zone = GetZoneName(mapID)
+				-- Auto-detect the zone to use: prefer the zone the player is
+				-- currently standing in, so the dropdown matches where we are.
+				-- Fall back to the map currently viewed on the world map (on
+				-- clients where GetMapID() returns a uiMapID).
+				local name = GetPlayerRouteZone()
+				if not name then
+					name = ZoneNameForMap(WorldMapFrame and WorldMapFrame.GetMapID and WorldMapFrame:GetMapID())
+				end
+				if not name then return nil end
+				create_zone = name
 				return create_zone
 			end,
 			set = function(info, key) create_zone = key end,
@@ -3195,6 +3530,7 @@ do
 	end
 	function TabooHandler:SaveEditTaboo(info)
 		local zone = tonumber(info[2])
+			Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 		if info[1] == "routes_group" then
 			local route = Routes.routekeys[zone][ info[3] ]
 			local route_data = db.routes[zone][route]
@@ -3404,10 +3740,14 @@ do
 			end,
 			get = function()
 				if create_zone then return create_zone end
-				-- Use currently viewed map on first view.
-				local mapID = WorldMapFrame:GetMapID()
-				if not mapID then return nil end
-				create_zone = GetZoneName(mapID)
+				-- Same auto-detection as for routes: use the zone the player is
+				-- currently standing in, falling back to the viewed world map.
+				local name = GetPlayerRouteZone()
+				if not name then
+					name = ZoneNameForMap(WorldMapFrame and WorldMapFrame.GetMapID and WorldMapFrame:GetMapID())
+				end
+				if not name then return nil end
+				create_zone = name
 				return create_zone
 			end,
 			set = function(info, key) create_zone = key end,

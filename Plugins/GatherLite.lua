@@ -53,7 +53,18 @@ local function Summarize(data, zone)
 
         local translatednode = GatherLite:translate("node." .. object.name);
         local count = amount_of[node.object];
-        data[("%s;%s;%s;%s"):format(SourceName, node.type, object.name, count)] = ("%s - %s (%d)"):format(translate_db_type[node.type], translatednode, count)
+        -- append the minimum required skill, colored by the character's own
+        -- skill: "Herbalism - Goldthorn (34) - 170"
+        local suffix = ""
+        local prof = translate_db_type[node.type]
+        if (prof == "Herbalism" or prof == "Mining") and Routes.GetNodeSkillSuffix then
+            suffix = Routes:GetNodeSkillSuffix(prof, nil, object.name)
+            if not suffix then
+                suffix = Routes:GetNodeSkillSuffix(prof, nil, translatednode)
+            end
+            suffix = suffix or ""
+        end
+        data[("%s;%s;%s;%s"):format(SourceName, node.type, object.name, count)] = ("%s - %s (%d)%s"):format(translate_db_type[node.type], translatednode, count, suffix)
     end
     return data
 end

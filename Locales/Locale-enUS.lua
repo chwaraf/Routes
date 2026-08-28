@@ -1,4 +1,4 @@
-﻿-- Routes
+-- Routes
 -- enUS and enGB Localization file
 
 local L = LibStub("AceLocale-3.0"):NewLocale("Routes", "enUS", true)
@@ -142,9 +142,7 @@ L["These settings control the visibility and look of the drawn route."] = true
 L["Width (Map)"] = true
 L["Width of the line in the map"] = true
 L["Width (Minimap)"] = true
-L["Width of the line in the Minimap"] = true
 L["Width (Zone Map)"] = true
-L["Width of the line in the Zone Map"] = true
 L["Line Color"] = true
 L["Change the line color"] = true
 L["Hide Route"] = true
@@ -158,6 +156,15 @@ L["Reset the line settings to defaults"] = true
 
 L["Optimize Route"] = true
 L["Route Optimizing"] = true
+L["Algorithm"] = true
+L["AlgorithmDesc"] = "Which optimizer to use. Lin-Kernighan produces the shortest routes and is the recommended setting. 2-opt / Or-opt is a simpler local search that converges a little faster on small routes. Both are far faster than Ant Colony and have no node limit; Ant Colony is the original optimizer, kept for comparison."
+L["Lin-Kernighan"] = true
+L["2-opt / Or-opt"] = true
+L["Ant Colony (legacy)"] = true
+L["Optimization effort"] = true
+L["Simulated annealing"] = true
+L["AnnealingDesc"] = "Lets the optimizer accept a slightly worse route now and then, less and less often as it runs, so it can climb out of a dead end instead of polishing one. It never returns a worse route than it would have without this, since the best route found is always kept. Recommended setting is ON."
+L["EffortDesc"] = "How long to keep improving the route. Higher values search longer for a shorter route, with diminishing returns past the middle of the range. Foreground optimizing is limited to roughly a third of a second per point of effort, background optimizing to about three seconds per point."
 L["Extra optimization"] = true
 L["ExtraOptDesc"] = "Turning on this option will make optimizing the route take approximately 40% longer, but will generate -slightly- better routes. Recommended setting is OFF."
 L["Foreground"] = true
@@ -166,9 +173,11 @@ L["Background"] = true
 L["Background Disclaimer"] = "This will perform the TSP route generation in the background much more slowly without locking up WoW. Please note that your WoW will still take a noticable performance hit."
 L["Path with %d nodes found with length %.2f yards after %d iterations in %.2f seconds."] = true
 L["Now running TSP in the background..."] = true
+L["Now optimizing the route; the game stays responsive while it runs..."] = true
 L["There is already a TSP running in background. Wait for it to complete first."] = true
 L["The following error occured in the background path generation coroutine, please report to Grum or Xinhuan:"] = true
-L["TOO_MANY_NODES_ERROR"] = "This route has more than 724 nodes. Please reduce it by removing some nodes or by clustering otherwise memory allocation errors will occur."
+L["The following error occured in the background clustering coroutine, please report to Grum or Xinhuan:"] = true
+L["TOO_MANY_NODES_ERROR"] = "This route has more than 724 nodes, which is more than the Ant Colony optimizer can handle without running into memory allocation errors. Switch the algorithm to Lin-Kernighan or 2-opt / Or-opt, which have no node limit, or reduce the route by removing some nodes or by clustering."
 L["Pass %d: %d%% - %d yards"] = true
 L["Pass %d: %d%%"] = true
 
@@ -182,6 +191,14 @@ L["Cluster this route"] = true
 L["Cluster this route in the background"] = true
 L["Background Route Clustering completed."] = true
 L["Now running route clustering in the background..."] = true
+L["Route Clustering completed."] = true
+L["Now clustering the route; the game stays responsive while it runs..."] = true
+L["Cluster + Optimize"] = true
+L["Cluster + Optimize Desc"] = "Cluster the route, then automatically optimize the cluster points. Clustering runs first, so the optimizer solves a much smaller problem. Both steps run in the background, one after the other."
+L["Now clustering the route; it will be optimized automatically when clustering finishes."] = true
+L["Clustering done, now optimizing the cluster points..."] = true
+L["Now optimizing the clustered route; the game stays responsive while it runs..."] = true
+L["No %s (%d)"] = "No %s (%d)"
 L["Uncluster"] = true
 L["Uncluster this route"] = true
 

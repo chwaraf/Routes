@@ -29,6 +29,14 @@ end
 ------------------------------------------
 -- functions
 
+-- returns the english name, translated name for the node so we can store it was being requested
+-- also returns the type of db for use with auto show/hide route
+local translate_db_type = {
+	["HERB"] = "Herbalism",
+	["MINE"] = "Mining",
+	["OPEN"] = "Treasure",
+	["ARCH"] = "Archaeology",
+}
 local function Summarize(data, zone)
 	local amount_of = {}
 	local db_type_of = {}
@@ -43,21 +51,24 @@ local function Summarize(data, zone)
 	for node, count in pairs(amount_of) do
 		local db_type = db_type_of[node]
 		local translatednode = Gatherer.Util.GetNodeName(node)
-		data[ ("%s;%s;%s;%s"):format(SourceName, db_type, node, count) ] = ("%s - %s (%d)"):format(L[SourceName..db_type], translatednode, count)
+		-- append the minimum required skill, colored by the character's own
+		-- skill: "Herbalism - Goldthorn (34) - 170"
+		local suffix = ""
+		local prof = translate_db_type[db_type]
+		if (prof == "Herbalism" or prof == "Mining") and Routes.GetNodeSkillSuffix then
+			suffix = Routes:GetNodeSkillSuffix(prof, nil, node)
+			if not suffix then
+				suffix = Routes:GetNodeSkillSuffix(prof, nil, translatednode)
+			end
+			suffix = suffix or ""
+		end
+		data[ ("%s;%s;%s;%s"):format(SourceName, db_type, node, count) ] = ("%s - %s (%d)%s"):format(L[SourceName..db_type], translatednode, count, suffix)
 	end
 
 	return data
 end
 source.Summarize = Summarize
 
--- returns the english name, translated name for the node so we can store it was being requested
--- also returns the type of db for use with auto show/hide route
-local translate_db_type = {
-	["HERB"] = "Herbalism",
-	["MINE"] = "Mining",
-	["OPEN"] = "Treasure",
-	["ARCH"] = "Archaeology",
-}
 local function AppendNodes(node_list, zone, db_type, node_type)
 	local zoneID = Routes.LZName[zone]
 	node_type = tonumber(node_type)

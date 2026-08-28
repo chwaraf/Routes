@@ -30,6 +30,54 @@ end
 ------------------------------------------
 -- functions
 
+-- returns the english name, translated name for the node so we can store it was being requested
+-- also returns the type of db for use with auto show/hide route
+local translate_db_type = {
+	["Herb Gathering"] = "Herbalism",
+	["Mining"] = "Mining",
+	["Fishing"] = "Fishing",
+	["Extract Gas"] = "ExtractGas",
+	["Treasure"] = "Treasure",
+	["Archaeology"] = "Archaeology",
+	["Logging"] = "Logging",
+}
+-- GatherMate2 identifies nodes by its own node-id space, and GetNameForNode
+-- returns the client-locale name. Resolve the ENGLISH name from
+-- GatherMate2.nodeIDs (keyed by English name -> node id) so the name-based
+-- skill table works on any locale as a second path alongside the node-id
+-- table (which stays correct even if a future GatherMate2 renumbers nodes).
+local english_node_cache = {}
+local function english_node_name(db_type, node)
+	local ids = GatherMate2.nodeIDs and GatherMate2.nodeIDs[db_type]
+	if not ids then return nil end
+	local cache = english_node_cache[db_type]
+	if not cache then
+		cache = {}
+		english_node_cache[db_type] = cache
+	end
+	if cache[node] ~= nil then
+		return cache[node] or nil
+	end
+	for name, id in pairs(ids) do
+		if id == node then
+			cache[node] = name
+			return name
+		end
+	end
+	cache[node] = false
+	return nil
+end
+
+-- herb and mining nodes get their minimum required skill appended to the
+-- name, colored against the player's own profession skill
+local function node_skill_suffix(db_type, node, nodeName)
+	local prof = translate_db_type[db_type]
+	if (prof == "Herbalism" or prof == "Mining") and Routes.GetNodeSkillSuffix then
+		return Routes:GetNodeSkillSuffix(prof, node, english_node_name(db_type, node) or nodeName)
+	end
+	return nil
+end
+
 local amount_of = {}
 local function Summarize(data, zone)
 	LN = LibStub("AceLocale-3.0"):GetLocale("GatherMate2Nodes", true) -- Workaround LoD of GatherMate2 if AddonLoader is used.
@@ -43,12 +91,14 @@ local function Summarize(data, zone)
 			for _,node in pairs(db_data[zoneID]) do
 				amount_of[node] = (amount_of[node] or 0) + 1
 			end
-			-- XXX Localize these strings
 			-- store combinations with all information we have
 			for node,count in pairs(amount_of) do
 				local translatednode = GatherMate2:GetNameForNode(db_type, node)
 				if translatednode then
-					data[ ("%s;%s;%s;%s"):format(SourceName, db_type, node, count) ] = ("%s - %s (%d)"):format(L[SourceName..db_type], translatednode, count)
+					-- append the minimum required skill, colored by the
+					-- character's own skill: "Herbalism - Goldthorn (34) - 170"
+					local suffix = node_skill_suffix(db_type, node, translatednode) or ""
+					data[ ("%s;%s;%s;%s"):format(SourceName, db_type, node, count) ] = ("%s - %s (%d)%s"):format(L[SourceName..db_type], translatednode, count, suffix)
 				end
 			end
 		end
@@ -56,18 +106,6 @@ local function Summarize(data, zone)
 	return data
 end
 source.Summarize = Summarize
-
--- returns the english name, translated name for the node so we can store it was being requested
--- also returns the type of db for use with auto show/hide route
-local translate_db_type = {
-	["Herb Gathering"] = "Herbalism",
-	["Mining"] = "Mining",
-	["Fishing"] = "Fishing",
-	["Extract Gas"] = "ExtractGas",
-	["Treasure"] = "Treasure",
-	["Archaeology"] = "Archaeology",
-	["Logging"] = "Logging",
-}
 local function AppendNodes(node_list, zone, db_type, node_type)
 	if type(GatherMate2.gmdbs[db_type]) == "table" then
 		node_type = tonumber(node_type)
