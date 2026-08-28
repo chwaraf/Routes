@@ -178,6 +178,7 @@ function TSPClusterFrame:OnUpdate(elapsed)
 			self.finishFunc = nil
 			self.statusFunc = nil
 			self.co = nil
+			self.nodes = nil
 		end
 	else
 		-- An error occured in the coroutine, abort and print the error
@@ -186,18 +187,30 @@ function TSPClusterFrame:OnUpdate(elapsed)
 		self.co = nil
 		self.finishFunc = nil
 		self.statusFunc = nil
+		self.nodes = nil
 		Routes:Print(Routes.L["The following error occured in the background clustering coroutine, please report to Grum or Xinhuan:"])
 		Routes:Print(nodes)
 	end
 end
 
+-- True while ANY background job (pathing or clustering) is running, with the
+-- route table it is working on. Both job types read the route at start and
+-- overwrite it at finish, so only one may run at a time (see
+-- SolveTSPBackground / ClusterRouteBackground) - this is what lets the
+-- delete/edit guards below refuse to touch a busy route.
 function TSP:IsTSPRunning()
-	return TSPUpdateFrame.running, TSPUpdateFrame.nodes
+	if TSPUpdateFrame.running then
+		return true, TSPUpdateFrame.nodes
+	end
+	if TSPClusterFrame.running then
+		return true, TSPClusterFrame.nodes
+	end
+	return nil
 end
 
 -- Same arguments as TSP:SolveTSP(), without the "nonblocking" argument
 function TSP:SolveTSPBackground(nodes, metadata, taboos, zoneID, parameters, path)
-	if not TSPUpdateFrame.running then
+	if not TSPUpdateFrame.running and not TSPClusterFrame.running then
 		TSPUpdateFrame.co = coroutine.create(TSP.SolveTSP)
 		TSPUpdateFrame:SetScript("OnUpdate", TSPUpdateFrame.OnUpdate)
 		TSPUpdateFrame.running = true
@@ -214,7 +227,7 @@ function TSP:SolveTSPBackground(nodes, metadata, taboos, zoneID, parameters, pat
 			return 3, path
 		end
 	else
-		-- There is already a TSP running
+		-- There is already a TSP or clustering job running
 		return 2
 	end
 end
@@ -2059,11 +2072,12 @@ function TSP:ClusterRoute(nodes, zoneID, radius, nonblocking)
 end
 
 function TSP:ClusterRouteBackground(nodes, zoneID, radius, finishFunc)
-	if not TSPClusterFrame.running then
+	if not TSPClusterFrame.running and not TSPUpdateFrame.running then
 		TSPClusterFrame.co = coroutine.create(TSP.ClusterRoute)
 		TSPClusterFrame.finishFunc = finishFunc
 		TSPClusterFrame:SetScript("OnUpdate", TSPClusterFrame.OnUpdate)
 		TSPClusterFrame.running = true
+		TSPClusterFrame.nodes = nodes
 		local status = coroutine.resume(TSPClusterFrame.co, TSP, nodes, zoneID, radius, true)
 		if status then
 			-- Do nothing, path isn't complete because at least 1 yield() is called.
@@ -2073,9 +2087,11 @@ function TSP:ClusterRouteBackground(nodes, zoneID, radius, finishFunc)
 			TSPClusterFrame.running = false
 			TSPClusterFrame:SetScript("OnUpdate", nil)
 			TSPClusterFrame.co = nil
+			TSPClusterFrame.nodes = nil
 			return 3
 		end
 	else
+		-- There is already a TSP or clustering job running
 		return 2
 	end
 end

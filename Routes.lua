@@ -1899,15 +1899,32 @@ function ConfigHandler:ClusterRouteBackground(info, foreground)
 		LibStub("AceConfigRegistry-3.0"):NotifyChange("Routes")
 	end
 
-	Routes:Print(foreground and L["Now clustering the route; the game stays responsive while it runs..."]
-		or L["Now running route clustering in the background..."])
-	Routes.TSP:ClusterRouteBackground(db.routes[zone][route].route, zone, db.defaults.cluster_dist, callbackClusterFinished)
+	local running, errormsg = Routes.TSP:ClusterRouteBackground(db.routes[zone][route].route, zone, db.defaults.cluster_dist, callbackClusterFinished)
+	if running == 1 then
+		Routes:Print(foreground and L["Now clustering the route; the game stays responsive while it runs..."]
+			or L["Now running route clustering in the background..."])
+	elseif running == 2 then
+		-- A TSP or another clustering job is running; the previous
+		-- "Now clustering..." would otherwise have claimed a start that
+		-- never happened.
+		Routes:Print(L["There is already a TSP running in background. Wait for it to complete first."])
+	elseif running == 3 then
+		Routes:Print(L["The following error occured in the background clustering coroutine, please report to Grum or Xinhuan:"])
+		Routes:Print(errormsg)
+	end
 end
 
 function ConfigHandler:UnClusterRoute(info)
 	local zone = tonumber(info[2])
 	local route = Routes.routekeys[zone][ info[3] ]
 	local t = db.routes[zone][route]
+	-- A clustering job that started earlier would overwrite this route when
+	-- it finishes, silently re-applying the cluster we are about to remove.
+	local is_running, route_table = Routes.TSP:IsTSPRunning()
+	if is_running and route_table == t.route then
+		Routes:Print(L["There is already a TSP running in background. Wait for it to complete first."])
+		return
+	end
 	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	local num = 0
 	for i = 1, #t.metadata do
