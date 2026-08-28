@@ -135,9 +135,6 @@ local playerSkillCache = {}
 local playerSkillFailAt = {}
 local PLAYER_SKILL_FAIL_TTL = 10 -- seconds
 
--- The character's current rank in "Herbalism" or "Mining" (nil if not
--- learned). Cached per profession; the rank only changes on skill-up.
---
 -- Different client generations expose the rank through different APIs, so
 -- several are probed (all wrapped in pcall, since a hybrid classic client
 -- may expose an API that exists but does not work):
@@ -549,8 +546,9 @@ end
 -- itemID:   the node's item id when the data source provides one
 -- nodeName: the node's (English) name when the data source is name-based
 -- Returns a display suffix like " - |cffff3333170|r" to append after the
--- node count, or nil when the requirement is unknown. Uncolored when the
--- character has not learned the profession.
+-- node count, or nil when the requirement is unknown. The number is colored
+-- against the character's own rank (red when it is below the requirement or
+-- the profession is not learned at all).
 function Routes:GetNodeSkillSuffix(prof, itemID, nodeName)
 	if prof ~= "Herbalism" and prof ~= "Mining" then return nil end
 	RefreshProfNames()
