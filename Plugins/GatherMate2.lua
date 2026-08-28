@@ -91,7 +91,6 @@ local function Summarize(data, zone)
 			for _,node in pairs(db_data[zoneID]) do
 				amount_of[node] = (amount_of[node] or 0) + 1
 			end
-			-- XXX Localize these strings
 			-- store combinations with all information we have
 			for node,count in pairs(amount_of) do
 				local translatednode = GatherMate2:GetNameForNode(db_type, node)

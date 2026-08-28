@@ -469,9 +469,15 @@ local function PlayerSkillFor(prof)
 end
 
 local function PlayerProfessionMissing(prof)
-	if playerSkillCache[prof] == nil then
-		UpdateSkillState(prof)
+	local cached = playerSkillCache[prof]
+	if cached ~= nil then
+		return cached == false
 	end
+	local failAt = playerSkillFailAt[prof]
+	if failAt and (GetTime() - failAt) < PLAYER_SKILL_FAIL_TTL then
+		return false -- state unknown; do not rescan once per node during the TTL
+	end
+	UpdateSkillState(prof)
 	return playerSkillCache[prof] == false
 end
 

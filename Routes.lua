@@ -379,7 +379,7 @@ local function is_round( dx, dy )
 
 	local q = 1
 	if dx > 0 then q = q + 2 end -- right side
-	-- XXX Tripple check this
+	-- Minimap quadrant lookup for non-round minimap masks
 	if dy > 0 then q = q + 1 end -- bottom side
 
 	return MinimapShapes[map_shape][q]
@@ -2778,30 +2778,30 @@ do
 		-- available since the last build, the change hook drops last_zone and
 		-- the list below is rebuilt with colored skill numbers.
 		if Routes.RefreshNodeSkills then Routes:RefreshNodeSkills() end
-		local create_data = create_data[info.arg]
-		if not create_data then
-			create_data = {}
-			create_data[info.arg] = create_data
+		local data = create_data[info.arg]
+		if not data then
+			data = {}
+			create_data[info.arg] = data
 		end
-		if last_zone[info.arg] == create_zone then return create_data end
+		if last_zone[info.arg] == create_zone then return data end
 		-- reuse table
-		wipe(create_data)
+		wipe(data)
 		-- extract data from plugin
 		if Routes.plugins[info.arg].IsActive() then
-			Routes.plugins[info.arg].Summarize(create_data, create_zone)
+			Routes.plugins[info.arg].Summarize(data, create_zone)
 		end
 		-- found no data - insert dummy message
-		if not next(create_data) then
-			create_data[ db.defaults.fake_data ..";;;" ] = L["No data found"]
+		if not next(data) then
+			data[ db.defaults.fake_data ..";;;" ] = L["No data found"]
 		end
 		last_zone[info.arg] = create_zone
 		-- Remove invalid entries due to updated data so we don't pairs over it during route creation
 		if create_choices[create_zone] then
 			for k in pairs(create_choices[create_zone]) do
-				if not create_data[k] then create_choices[create_zone][k] = nil end
+				if not data[k] then create_choices[create_zone][k] = nil end
 			end
 		end
-		return create_data
+		return data
 	end
 
 	local function get_source_value(info, key)

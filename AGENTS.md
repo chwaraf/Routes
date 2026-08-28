@@ -84,8 +84,9 @@ When changing addon code in Arena sessions:
 
 1. Stay on the assigned `arena/*` session branch and push only that branch.
 2. Run `tools/verify.sh` (or `bash tools/verify.sh` if the executable bit was lost) before publishing.
-3. Rebuild the committed addon package with `tools/build-zip.sh` so `dist/Routes.zip` matches the source change.
-4. Commit source/docs changes before building the zip; `tools/build-zip.sh` may create the separate dist zip commit and push the current branch.
+3. When touching locale files, check for missing and duplicate `L[...]` keys; keep every locale in sync with `Locale-enUS.lua`.
+4. Rebuild the committed addon package with `tools/build-zip.sh` so `dist/Routes.zip` matches the source change.
+5. Commit source/docs changes before building the zip; `tools/build-zip.sh` may create the separate dist zip commit and push the current branch.
 
 ## Client → interface number quick reference
 
