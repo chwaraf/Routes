@@ -2608,6 +2608,10 @@ do
 		-- the list below is rebuilt with colored skill numbers.
 		if Routes.RefreshNodeSkills then Routes:RefreshNodeSkills() end
 		local create_data = create_data[info.arg]
+		if not create_data then
+			create_data = {}
+			create_data[info.arg] = create_data
+		end
 		if last_zone[info.arg] == create_zone then return create_data end
 		-- reuse table
 		wipe(create_data)
@@ -2651,8 +2655,11 @@ do
 	-- appears, disappears or changes, so the per-zone cache is dropped and
 	-- the next open rebuilds the strings.
 	function Routes.OnNodeSkillChanged()
+		-- Drop the "which zone was built" marker (forces a rebuild on the
+		-- next open) and the selection state. NOTE: the create_data tables
+		-- themselves are reusable buffers owned by SetupSourcesOptTables --
+		-- get_source_values wipes their CONTENT, never the tables.
 		for k in pairs(last_zone) do last_zone[k] = nil end
-		for k in pairs(create_data) do create_data[k] = nil end
 		for k in pairs(create_choices) do create_choices[k] = nil end
 		LibStub("AceConfigRegistry-3.0"):NotifyChange("Routes")
 	end
