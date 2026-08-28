@@ -817,6 +817,7 @@ end)
 -- for inserting into relevant routes
 -- Zone name must be localized, node_name can be english or localized
 function Routes:InsertNode(zone, coord, node_name)
+	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	for route_name, route_data in pairs( db.routes[ self.LZName[zone] ] ) do
 		-- for every route check if the route is created with this node
 		if route_data.selection then
@@ -847,6 +848,7 @@ end
 -- for deleting into relevant routes
 -- Zone name must be localized, node_name can be english or localized
 function Routes:DeleteNode(zone, coord, node_name)
+	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	for route_name, route_data in pairs( db.routes[ self.LZName[zone] ] ) do
 		-- for every route check if the route is created with this node
 		if route_data.selection then
@@ -1791,6 +1793,7 @@ end
 function ConfigHandler:DeleteRoute(info)
 	local zone = tonumber(info[2])
 	local zoneKey = info[2]
+	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	local routekey = info[3]
 	local route = Routes.routekeys[zone][routekey]
 	local is_running, route_table = Routes.TSP:IsTSPRunning()
@@ -1814,6 +1817,7 @@ end
 function ConfigHandler:RecreateRoute(info)
 	local zone = tonumber(info[2])
 	local routekey = info[3]
+	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	local route = Routes.routekeys[zone][routekey]
 	local is_running, route_table = Routes.TSP:IsTSPRunning()
 	if is_running and route_table == db.routes[zone][route].route then
@@ -1843,6 +1847,7 @@ function ConfigHandler:ClusterRouteBackground(info, foreground)
 		t.route, t.metadata, t.length = route, metadata, length
 
 		t.cluster_dist = db.defaults.cluster_dist
+			Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 		Routes:Print(foreground and L["Route Clustering completed."]
 			or L["Background Route Clustering completed."])
 
@@ -1866,6 +1871,7 @@ function ConfigHandler:UnClusterRoute(info)
 	local zone = tonumber(info[2])
 	local route = Routes.routekeys[zone][ info[3] ]
 	local t = db.routes[zone][route]
+	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	local num = 0
 	for i = 1, #t.metadata do
 		for j = 1, #t.metadata[i] do
@@ -1945,11 +1951,35 @@ end
 
 do
 	local str = {}
-	function ConfigHandler.GetDataDesc(info)
+	local data = {}
+	-- The descriptions below are re-evaluated by AceConfig every time a route
+	-- tab is fed, and the cluster histogram walks every node of the route.
+	-- For a big route that is wasted work on every dialog open, so the texts
+	-- are cached per route table, keyed by a cheap signature of the route's
+	-- shape. The cache is weak (entries vanish with the route table) and is
+	-- wiped from every place that mutates a route.
+	local descCache = setmetatable({}, { __mode = "k" })
+	function Routes.ClearRouteDescCache()
+		for k in pairs(descCache) do descCache[k] = nil end
+	end
+
+	local function CountKeys(tbl)
+		local n = 0
+		for _ in pairs(tbl) do n = n + 1 end
+		return n
+	end
+
+	local function DescSig(t)
+		return (#t.route) .. ":" .. tostring(t.cluster_dist or 0) .. ":" ..
+			#(t.metadata or {}) .. ":" .. CountKeys(t.taboos or {}) .. ":" ..
+			#(t.taboolist or {}) .. ":" .. CountKeys(t.db_type or {}) .. ":" ..
+			CountKeys(t.selection or {})
+	end
+
+	local function ComputeDescs(t, zone)
+		local out = {}
+		-- data desc
 		wipe(str)
-		local zone = tonumber(info[2])
-		local route = Routes.routekeys[zone][ info[3] ]
-		local t = db.routes[zone][route]
 		local num = 1
 		str[num] = L["This route has nodes that belong to the following categories:"]
 		for k in pairs(t.db_type) do
@@ -1963,50 +1993,39 @@ do
 			if v == true then v = k end
 			str[num] = "|cffffd200     "..v.."|r"
 		end
-		return table.concat(str, "\n")
-	end
-
-	local data = {}
-	function ConfigHandler.GetClusterDesc(info)
-		wipe(str)
-		wipe(data)
-		local zone = tonumber(info[2])
-		local route = Routes.routekeys[zone][ info[3] ]
-		local t = db.routes[zone][route]
+		out.data = table.concat(str, "\n")
+		-- cluster desc
 		if not t.metadata then
-			return L["This route is not a clustered route."]
-		end
-
-		local numNodes = 0
-		local maxt = 0
-		local zoneW, zoneH = Routes.Dragons:GetZoneSize(zone)
-		for i = 1, #t.metadata do
-			local numData = #t.metadata[i]
-			numNodes = numNodes + numData
-			local x, y = floor(t.route[i] / 10000) / 10000, (t.route[i] % 10000) / 10000
-			for j = 1, numData do
-				local x2, y2 = floor(t.metadata[i][j] / 10000) / 10000, (t.metadata[i][j] % 10000) / 10000 -- to round off the coordinate
-				local t = (((x2 - x)*zoneW)^2 + ((y2 - y)*zoneH)^2)^0.5 - 0.0001
-				t = floor(t / 10)
-				data[t] = (data[t] or 0) + 1
-				if t > maxt then maxt = t end
+			out.cluster = L["This route is not a clustered route."]
+		else
+			wipe(str)
+			wipe(data)
+			local numNodes = 0
+			local maxt = 0
+			local zoneW, zoneH = Routes.Dragons:GetZoneSize(zone)
+			for i = 1, #t.metadata do
+				local numData = #t.metadata[i]
+				numNodes = numNodes + numData
+				local x, y = floor(t.route[i] / 10000) / 10000, (t.route[i] % 10000) / 10000
+				for j = 1, numData do
+					local x2, y2 = floor(t.metadata[i][j] / 10000) / 10000, (t.metadata[i][j] % 10000) / 10000 -- to round off the coordinate
+					local d = (((x2 - x)*zoneW)^2 + ((y2 - y)*zoneH)^2)^0.5 - 0.0001
+					d = floor(d / 10)
+					data[d] = (data[d] or 0) + 1
+					if d > maxt then maxt = d end
+				end
 			end
+			for i = 0, maxt do
+				str[i+4] = L["|cffffd200     %d|r node(s) are between |cffffd200%d|r-|cffffd200%d|r yards of a cluster point"]:format(data[i] or 0, i*10+1, i*10+10)
+			end
+			str[1] = L["This route is a clustered route, down from the original |cffffd200%d|r nodes."]:format(numNodes)
+			str[2] = L["The cluster radius of this route is |cffffd200%d|r yards."]:format(t.cluster_dist or 65) -- 65 was an old default
+			str[3] = L["|cffffd200     %d|r node(s) are at |cffffd2000|r yards of a cluster point"]:format(data[-1] or 0)
+			out.cluster = table.concat(str, "\n")
 		end
-		for i = 0, maxt do
-			str[i+4] = L["|cffffd200     %d|r node(s) are between |cffffd200%d|r-|cffffd200%d|r yards of a cluster point"]:format(data[i] or 0, i*10+1, i*10+10)
-		end
-		str[1] = L["This route is a clustered route, down from the original |cffffd200%d|r nodes."]:format(numNodes)
-		str[2] = L["The cluster radius of this route is |cffffd200%d|r yards."]:format(t.cluster_dist or 65) -- 65 was an old default
-		str[3] = L["|cffffd200     %d|r node(s) are at |cffffd2000|r yards of a cluster point"]:format(data[-1] or 0)
-		return table.concat(str, "\n")
-	end
-
-	function ConfigHandler.GetTabooDesc(info)
+		-- taboo desc
 		wipe(str)
-		local zone = tonumber(info[2])
-		local route = Routes.routekeys[zone][ info[3] ]
-		local t = db.routes[zone][route]
-		local num = 1
+		num = 1
 		str[num] = L["This route has the following taboo regions:"]
 		for k, v in pairs(t.taboos) do
 			if v then
@@ -2021,7 +2040,38 @@ do
 		end
 		num = num + 1
 		str[num] = L["This route contains |cffffd200%d|r nodes that have been tabooed."]:format(#t.taboolist)
-		return table.concat(str, "\n")
+		out.taboo = table.concat(str, "\n")
+		return out
+	end
+
+	local function GetRouteDescs(t, zone)
+		local sig = DescSig(t)
+		local c = descCache[t]
+		if c and c.sig == sig then return c end
+		c = { sig = sig, out = ComputeDescs(t, zone) }
+		descCache[t] = c
+		return c
+	end
+
+	function ConfigHandler.GetDataDesc(info)
+		local zone = tonumber(info[2])
+		local route = Routes.routekeys[zone][ info[3] ]
+		local t = db.routes[zone][route]
+		return GetRouteDescs(t, zone).out.data
+	end
+
+	function ConfigHandler.GetClusterDesc(info)
+		local zone = tonumber(info[2])
+		local route = Routes.routekeys[zone][ info[3] ]
+		local t = db.routes[zone][route]
+		return GetRouteDescs(t, zone).out.cluster
+	end
+
+	function ConfigHandler.GetTabooDesc(info)
+		local zone = tonumber(info[2])
+		local route = Routes.routekeys[zone][ info[3] ]
+		local t = db.routes[zone][route]
+		return GetRouteDescs(t, zone).out.taboo
 	end
 end
 
@@ -2066,6 +2116,7 @@ local function ApplyOptimizedRoute(t, output, meta, length, iter, timetaken)
 	t.route = output
 	t.length = length
 	t.metadata = meta
+	Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 	Routes:Print(L["Path with %d nodes found with length %.2f yards after %d iterations in %.2f seconds."]:format(#output, length, iter, timetaken))
 
 	-- redraw lines
@@ -3359,6 +3410,7 @@ do
 	end
 	function TabooHandler:SaveEditTaboo(info)
 		local zone = tonumber(info[2])
+			Routes.ClearRouteDescCache() -- route shapes changed; drop cached info descriptions
 		if info[1] == "routes_group" then
 			local route = Routes.routekeys[zone][ info[3] ]
 			local route_data = db.routes[zone][route]

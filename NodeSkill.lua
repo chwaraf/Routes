@@ -402,9 +402,19 @@ end
 -- One-shot compact diagnostic, printed when the tooltip fallback fails for
 -- a known item that is not in the static tables.
 local diagnosed = false
+-- Once the tooltip path is proven dead on this client, stop trying it: some
+-- classic builds expose the API but it produces nothing, and retrying it per
+-- node makes large node lists slow for zero benefit. A single failure is not
+-- proof (the item may simply be unknown to this client's item database), so
+-- the path is declared dead after a run of consecutive failures; any
+-- success resets the counter.
+local fallbackDead = false
+local fallbackFails = 0
+local FALLBACK_FAIL_LIMIT = 10
 local function DiagnoseFailure(itemID)
 	if diagnosed then return end
 	diagnosed = true
+	if ItemKnown(itemID) then fallbackDead = true end -- known item, no lines: definitively dead
 	local function yn(v) return v and "yes" or "no" end
 	local CTI = C_TooltipInfo or {}
 	local CI = C_Item or {}
@@ -500,6 +510,7 @@ local tooltipSkillCache = {}
 -- Read the requirement from the item tooltip (fallback for nodes missing
 -- from the static tables). Returns the required skill or nil.
 local function NodeRequiredSkill(itemID, prof)
+	if fallbackDead then return nil end -- proven dead on this client, see DiagnoseFailure
 	local key = itemID .. ":" .. prof
 	local cached = tooltipSkillCache[key]
 	if cached ~= nil then
@@ -507,7 +518,9 @@ local function NodeRequiredSkill(itemID, prof)
 		return nil
 	end
 	local req
-	if PopulateItemTooltip(itemID) then
+	local populated = PopulateItemTooltip(itemID)
+	if populated then
+		fallbackFails = 0
 		local target = profName[prof]
 		if target then
 			for i = 1, TooltipLineCount() do
@@ -526,6 +539,11 @@ local function NodeRequiredSkill(itemID, prof)
 					end
 				end
 			end
+		end
+	else
+		fallbackFails = fallbackFails + 1
+		if fallbackFails >= FALLBACK_FAIL_LIMIT then
+			fallbackDead = true -- this client's tooltip path yields nothing; stop retrying
 		end
 	end
 	tt:Hide()
