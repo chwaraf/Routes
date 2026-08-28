@@ -108,8 +108,9 @@ if ! cmp -s dist_zip.zip "$REPO/dist/Routes.zip"; then
   if ! git diff --cached --quiet; then
     git -c user.name="Arena Agent" -c user.email="arena@localhost" commit -q -m "dist: update Routes.zip addon package"
   fi
-  git push origin arena/01a041af-routes 2>&1 | tail -1
-  echo "published: https://github.com/chwaraf/Routes/blob/arena/01a041af-routes/dist/Routes.zip"
+  BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  git push origin "$BRANCH" 2>&1 | tail -1
+  echo "published: https://github.com/chwaraf/Routes/blob/$BRANCH/dist/Routes.zip"
 else
   echo "dist/Routes.zip already up to date"
 fi
