@@ -645,6 +645,40 @@ function Routes:NodeSkillDebug(itemID)
 	Routes:Print(("  item %d: table-skill=%s  suffix=%s"):format(
 		id, tostring(NodeSkillByID[id]), tostring(Routes:GetNodeSkillSuffix("Herbalism", id))))
 
+	-- probe one REAL node from the player's zone, straight from the data
+	-- source, so the pasted line covers the actual list entries too
+	local probe_map = ({ ["Herb Gathering"] = "Herbalism", ["Mining"] = "Mining" })
+	if GatherMate2 and type(GatherMate2.gmdbs) == "table"
+		and Routes.Dragons and Routes.Dragons.GetPlayerZone and Routes.GetZoneName then
+		local mapID = Routes.Dragons:GetPlayerZone()
+		if mapID then
+			local mdata = Routes.Dragons.mapData and Routes.Dragons.mapData[mapID]
+			if mdata and Enum and Enum.UIMapType
+				and (mdata.mapType == Enum.UIMapType.Dungeon or mdata.mapType == Enum.UIMapType.Micro) then
+				mapID = mdata.parent
+			end
+			local zoneName = Routes.GetZoneName(mapID)
+			if zoneName and Routes.LZName[zoneName] then
+				local zoneID = Routes.LZName[zoneName]
+				for db_type, db_data in pairs(GatherMate2.gmdbs) do
+					local prof = probe_map[db_type]
+					if prof and type(db_data) == "table" and type(db_data[zoneID]) == "table" then
+						for _, node in pairs(db_data[zoneID]) do
+							local nm = GatherMate2.GetNameForNode and GatherMate2:GetNameForNode(db_type, node)
+							if nm then
+								Routes:Print(("  real node [%s]: %s (id %s) suffix=%s"):format(
+									db_type, nm, tostring(node),
+									tostring(Routes:GetNodeSkillSuffix(prof, node, nm))))
+							end
+							break
+						end
+						break
+					end
+				end
+			end
+		end
+	end
+
 	Routes:Print(("  frame: SetItemByID=%s ProcessInfo=%s AddItem=%s SetHyperlink=%s NumLines=%s GetNumLines=%s GetText=%s TextLeft1=%s"):format(
 		yn(tt.SetItemByID), yn(tt.ProcessInfo), yn(tt.AddItem), yn(tt.SetHyperlink),
 		yn(tt.NumLines ~= nil), yn(tt.GetNumLines ~= nil), yn(tt.GetText ~= nil),
