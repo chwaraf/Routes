@@ -27,44 +27,44 @@ do
 end
 
 local amount_of = {}
+local type_of = {}
 local translate_db_type = {
     ["herbalism"] = "Herbalism",
     ["mining"] = "Mining",
 }
 local function Summarize(data, zone)
     local zoneID = Routes.LZName[zone]
-    local nodes = {};
+    wipe(amount_of)
+    wipe(type_of)
+
+    -- GatherLite can store thousands of nodes in Classic Era. Aggregate once
+    -- per object instead of building a per-zone node copy and formatting the
+    -- same display row repeatedly for every individual node.
     for index, node in ipairs(GatherLite:GetNodes()) do
         if zoneID == node.mapID then
-            table.insert(nodes, node);
+            amount_of[node.object] = (amount_of[node.object] or 0) + 1
+            type_of[node.object] = node.type
         end
     end
 
-    for index, node in ipairs(nodes) do
-        amount_of[node.object] = (amount_of[node.object] or 0) + 1
-    end
-
-    for index, node in ipairs(nodes) do
-        local object = GatherLite:GetNodeObject(node.object);
-
-        if not object then
-            break
-        end
-
-        local translatednode = GatherLite:translate("node." .. object.name);
-        local count = amount_of[node.object];
-        -- append the minimum required skill, colored by the character's own
-        -- skill: "Herbalism - Goldthorn (34) - 170"
-        local suffix = ""
-        local prof = translate_db_type[node.type]
-        if (prof == "Herbalism" or prof == "Mining") and Routes.GetNodeSkillSuffix then
-            suffix = Routes:GetNodeSkillSuffix(prof, nil, object.name)
-            if not suffix then
-                suffix = Routes:GetNodeSkillSuffix(prof, nil, translatednode)
+    for objectID, count in pairs(amount_of) do
+        local object = GatherLite:GetNodeObject(objectID)
+        if object then
+            local db_type = type_of[objectID]
+            local translatednode = GatherLite:translate("node." .. object.name)
+            -- append the minimum required skill, colored by the character's own
+            -- skill: "Herbalism - Goldthorn (34) - 170"
+            local suffix = ""
+            local prof = translate_db_type[db_type]
+            if (prof == "Herbalism" or prof == "Mining") and Routes.GetNodeSkillSuffix then
+                suffix = Routes:GetNodeSkillSuffix(prof, nil, object.name)
+                if not suffix then
+                    suffix = Routes:GetNodeSkillSuffix(prof, nil, translatednode)
+                end
+                suffix = suffix or ""
             end
-            suffix = suffix or ""
+            data[("%s;%s;%s;%s"):format(SourceName, db_type, object.name, count)] = ("%s - %s (%d)%s"):format(translate_db_type[db_type], translatednode, count, suffix)
         end
-        data[("%s;%s;%s;%s"):format(SourceName, node.type, object.name, count)] = ("%s - %s (%d)%s"):format(translate_db_type[node.type], translatednode, count, suffix)
     end
     return data
 end
@@ -74,13 +74,16 @@ local function AppendNodes(node_list, zone, db_type, node_type)
 
     for index, node in ipairs(GatherLite:GetNodes()) do
         if zoneID == node.mapID and node.type == db_type then
-            local newLoc = Routes:getID(node.posX, node.posY)
-            tinsert(node_list, newLoc)
+            local object = GatherLite:GetNodeObject(node.object)
+            if object and object.name == node_type then
+                local newLoc = Routes:getID(node.posX, node.posY)
+                tinsert(node_list, newLoc)
+            end
         end
     end
 
     local translatednode = GatherLite:translate("node." .. node_type)
-    return translatednode, translatednode, translate_db_type[db_type]
+    return node_type, translatednode, translate_db_type[db_type]
 end
 
 local function InsertNode(event, node)

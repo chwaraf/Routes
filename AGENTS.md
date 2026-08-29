@@ -76,6 +76,11 @@ tools/verify.sh
    unknown/unavailable profession rank from a confirmed missing profession:
    missing Herbalism/Mining is shown as purple `No <profession> (<skill>)`,
    while learned-but-too-low skill remains a red requirement number.
+10. **Route creation hot paths matter on Classic Era.** Creating routes from
+   data sources runs in the AceConfig click handler: keep `AppendNodes`,
+   `Summarize`, `DecrossRoute`, and immediate redraw work linear or
+   `O(n log n)` with cheap comparators. Avoid per-node tooltip/profession
+   probes and repeated full-zone scans where possible.
 
 
 ## Agent workflow for changes
