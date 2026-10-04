@@ -55,7 +55,9 @@ tools/verify.sh
    `format` is `%`-style. `(...) : format(...)` is used a lot.
 4. **Multi-client code is probe-and-pcall.** When an API differs across
    clients, probe for existence and wrap calls in `pcall` (see `NodeSkill.lua`
-   rank/tooltip probing as the canonical example).
+   rank/tooltip probing as the canonical example). Do not infer modern APIs
+   from a large interface number: Forever is `16001` but uses Mainline APIs,
+   and current beta builds report `WOW_PROJECT_CAMELOT` rather than Mainline.
 5. **Locale files**: never add a key only to `enUS` — every locale file must
    define all keys or you get "Missing entry" warnings (AceLocale read-only
    metatable). New UI strings → add to all 9 locale files.
@@ -98,6 +100,7 @@ When changing addon code in Arena sessions:
 | Client | Interface |
 | --- | --- |
 | Retail (Midnight 12.x) | 120005 / 120007 |
+| Forever Beta (1.60.1; Mainline APIs, `WOW_PROJECT_CAMELOT`) | 16001 |
 | Classic Era (1.15.8 / 1.15.9) | 11508 / 11509 |
 | MoP Classic (5.5.x) | 50503 / 50504 |
 | TBC Classic (2.5.x) | 20505 / 20506 |

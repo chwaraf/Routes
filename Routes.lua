@@ -68,7 +68,13 @@ local G = {} -- was Graph-1.0, but we removed the dependency
 Routes.G = G
 Routes.Dragons = LibStub("HereBeDragons-2.0")
 
-local WoW90 = select(4, GetBuildInfo()) >= 90000
+-- Forever uses the Mainline UI/API family despite its 1.60.x version number.
+-- Build-number checks therefore misclassify it as an old Classic client. Probe
+-- the exact minimap API we need, and include Forever's dedicated project ID
+-- (introduced during beta) wherever Mainline frame behavior is required.
+local HasModernMinimapAPI = C_Minimap and C_Minimap.GetViewRadius
+local IsMainlineFamily = WOW_PROJECT_ID == WOW_PROJECT_MAINLINE
+	or (WOW_PROJECT_CAMELOT and WOW_PROJECT_ID == WOW_PROJECT_CAMELOT)
 
 -- database defaults
 local db
@@ -509,7 +515,7 @@ function Routes:DrawMinimapLines(forceUpdate)
 		cos = math_cos(facing)
 	end
 
-	if WoW90 then
+	if HasModernMinimapAPI then
 		minimap_radius = C_Minimap.GetViewRadius()
 	else
 		minimap_radius = MinimapSize[indoors][Minimap:GetZoom()]
@@ -1158,7 +1164,7 @@ end
 
 
 function Routes:MINIMAP_UPDATE_ZOOM()
-	if not WoW90 then
+	if not HasModernMinimapAPI then
 		local zoom = Minimap:GetZoom()
 		if GetCVar("minimapZoom") == GetCVar("minimapInsideZoom") then
 			Minimap:SetZoom(zoom < 2 and zoom + 1 or zoom - 1)
@@ -1314,7 +1320,7 @@ function Routes:OnEnable()
 	end
 
 	-- Minimap line drawing
-	if not WoW90 then
+	if not HasModernMinimapAPI then
 		self:SecureHook(Minimap, "SetZoom", SetZoomHook)
 	end
 	if db.defaults.draw_minimap then
@@ -3487,7 +3493,7 @@ do
 		taboo_edit_list[taboo_data] = copy_of_taboo_data
 
 		-- open the WorldMapFlame on the right zone
-		if WOW_PROJECT_ID == WOW_PROJECT_MAINLINE then
+		if IsMainlineFamily then
 			OpenWorldMap(zone)
 		else
 			ShowUIPanel(WorldMapFrame)
