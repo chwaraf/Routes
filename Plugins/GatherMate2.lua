@@ -110,25 +110,32 @@ local function AppendNodes(node_list, zone, db_type, node_type)
 	if type(GatherMate2.gmdbs[db_type]) == "table" then
 		node_type = tonumber(node_type)
 
-		-- Find all of the notes
+		-- Find all of the notes. Prefer the raw per-zone table: route creation can
+		-- call AppendNodes once per selected node type, and the iterator wrapper is
+		-- noticeably slower on Classic Era with large GatherMate2 databases.
 		local zoneID = Routes.LZName[zone]
-		for loc, t in GatherMate2:GetNodesForZone(zoneID, db_type, true) do
-			-- And are of a selected type - store
-			if t == node_type then
-				-- Convert GM2 location to our format
-				local x, y, l = GatherMate2:DecodeLoc(loc) -- ignore level for now
-				local newLoc = Routes:getID(x, y)
-				tinsert( node_list, newLoc )
+		local zoneData = GatherMate2.gmdbs[db_type] and GatherMate2.gmdbs[db_type][zoneID]
+		if zoneData then
+			for loc, t in pairs(zoneData) do
+				if t == node_type then
+					local x, y, l = GatherMate2:DecodeLoc(loc) -- ignore level for now
+					local newLoc = Routes:getID(x, y)
+					tinsert( node_list, newLoc )
+				end
+			end
+		else
+			for loc, t in GatherMate2:GetNodesForZone(zoneID, db_type, true) do
+				if t == node_type then
+					local x, y, l = GatherMate2:DecodeLoc(loc) -- ignore level for now
+					local newLoc = Routes:getID(x, y)
+					tinsert( node_list, newLoc )
+				end
 			end
 		end
 
 		-- return the node_type for auto-adding
 		local translatednode = GatherMate2:GetNameForNode(db_type, node_type)
-		for k, v in pairs(LN) do
-			if v == translatednode then -- get the english name
-				return k, v, translate_db_type[db_type]
-			end
-		end
+		return english_node_name(db_type, node_type) or translatednode, translatednode, translate_db_type[db_type]
 	end
 end
 source.AppendNodes = AppendNodes

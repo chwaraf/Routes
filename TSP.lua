@@ -930,18 +930,29 @@ function TSP:SolveTSPILS(nodes, metadata, taboos, zoneID, parameters, path, nonb
 	local cand, candW = {}, {}
 	do
 		local scratch, rawD = {}, {}
-		local function byRawDistance(a, b) return rawD[a] < rawD[b] end
 
 		for i = 1, numNodes do
 			local bx, by = cellCX[i], cellCY[i]
-			local found = 0
+			local limit = 0
 			local extraRings = 0
-			wipe(scratch)
-			wipe(rawD)
+
+			local function addCandidate(j, d)
+				if limit == K and d >= rawD[limit] then return end
+				local pos = limit < K and (limit + 1) or limit
+				while pos > 1 and rawD[pos - 1] > d do
+					if pos <= K then
+						scratch[pos], rawD[pos] = scratch[pos - 1], rawD[pos - 1]
+					end
+					pos = pos - 1
+				end
+				scratch[pos], rawD[pos] = j, d
+				if limit < K then limit = limit + 1 end
+			end
 
 			-- Walk outwards a cell ring at a time. Stop one ring after we have
 			-- enough candidates, so nodes near a cell boundary still see the
-			-- neighbours sitting just over it.
+			-- neighbours sitting just over it. Keep only the nearest K while
+			-- scanning; sorting every found neighbour is expensive on Classic Era.
 			for r = 0, gridDim do
 				for cy = by - r, by + r do
 					if cy >= 0 and cy < gridDim then
@@ -955,9 +966,7 @@ function TSP:SolveTSPILS(nodes, metadata, taboos, zoneID, parameters, path, nonb
 										local j = bucket[m]
 										if j ~= i then
 											local dx, dy = X[i] - X[j], Y[i] - Y[j]
-											found = found + 1
-											scratch[found] = j
-											rawD[j] = (dx*dx + dy*dy)^0.5
+											addCandidate(j, (dx*dx + dy*dy)^0.5)
 										end
 									end
 								end
@@ -970,20 +979,18 @@ function TSP:SolveTSPILS(nodes, metadata, taboos, zoneID, parameters, path, nonb
 						end
 					end
 				end
-				if found >= K then
+				if limit >= K then
 					extraRings = extraRings + 1
 					if extraRings > 1 then break end
 				end
 			end
 
-			-- Nearest K by plain distance...
-			table.sort(scratch, byRawDistance)
-			local limit = found < K and found or K
 			local list, listW = {}, {}
 			for m = 1, limit do
 				local j = scratch[m]
 				list[m] = j
 				listW[m] = weight(i, j)
+				scratch[m], rawD[m] = nil, nil
 			end
 			-- ...then reordered by weight, so a taboo-crossing neighbour sinks to
 			-- the end where the early break in the move scans will skip it. Only
@@ -1903,7 +1910,8 @@ ensuring every original node in a cluster remains within the configured radius
 of that centroid. A spatial grid limits candidate checks to nearby nodes, so
 large data-source routes finish quickly enough for WoW clients while preserving
 the important guarantee that clustering is reversible through metadata.
-]]function TSP:ClusterRoute(nodes, zoneID, radius, nonblocking)
+]]
+function TSP:ClusterRoute(nodes, zoneID, radius, nonblocking)
 	local numNodes = #nodes
 	local zoneW, zoneH = Routes.Dragons:GetZoneSize(zoneID)
 	local diameter = radius * 2
@@ -1929,6 +1937,7 @@ the important guarantee that clustering is reversible through metadata.
 	local cellSize = radius
 	if cellSize <= 0 then cellSize = 1 end
 	local cellRange = 2 -- diameter / cellSize
+	local gridW = floor(zoneW / cellSize) + 1
 
 	for i = 1, numNodes do
 		local coord = nodes[i]
@@ -1937,7 +1946,7 @@ the important guarantee that clustering is reversible through metadata.
 		X[i], Y[i] = x, y
 		local cx, cy = floor(x / cellSize), floor(y / cellSize)
 		cellX[i], cellY[i] = cx, cy
-		local key = cx .. ":" .. cy
+		local key = cy * gridW + cx
 		local bucket = cells[key]
 		if not bucket then
 			bucket = {}
@@ -1971,7 +1980,7 @@ the important guarantee that clustering is reversible through metadata.
 			local seedCellX, seedCellY = cellX[seed], cellY[seed]
 			for gy = seedCellY - cellRange, seedCellY + cellRange do
 				for gx = seedCellX - cellRange, seedCellX + cellRange do
-					local bucket = cells[gx .. ":" .. gy]
+					local bucket = cells[gy * gridW + gx]
 					if bucket then
 						for bi = 1, #bucket do
 							local j = bucket[bi]
@@ -2076,61 +2085,34 @@ end
 -- creation to get an initial quality value.
 function TSP:DecrossRoute(nodes)
 	local numNodes = #nodes
-	local math_atan2 = math.atan2
+	if numNodes < 3 then return nodes end
 
-	-- Find the nodes centroid
+	local math_atan2 = math.atan2
 	local x, y = 0, 0
-	for index, value in ipairs(nodes) do
-		x = x + floor(value / 1e4)
-		y = y + value % 1e4
+
+	-- Find the nodes centroid.
+	for i = 1, numNodes do
+		local coord = nodes[i]
+		x = x + floor(coord / 1e4)
+		y = y + coord % 1e4
 	end
 	x = x / numNodes
 	y = y / numNodes
 
-	-- From the middle, link all nodes in a circle
+	-- From the middle, link all nodes in a circle. Precompute the angle once
+	-- per coordinate; doing floor/mod/atan2 inside table.sort's comparator is
+	-- very noticeable on Classic Era when creating large data-source routes.
+	local angle = {}
+	for i = 1, numNodes do
+		local coord = nodes[i]
+		angle[coord] = math_atan2(coord % 1e4 - y, floor(coord / 1e4) - x)
+	end
 	table.sort(nodes, function(a, b)
-		local aX = floor(a / 1e4)
-		local aY = a % 1e4
-		local bX = floor(b / 1e4)
-		local bY = b % 1e4
-		return math_atan2(aY - y, aX - x) < math_atan2(bY - y, bX - x)
+		local aa, bb = angle[a], angle[b]
+		if aa == bb then return a < b end
+		return aa < bb
 	end)
-
-	--[[
-	local weight = {}
-	local path = {}
-	local prune = {}
-	for i = 1, numNodes do
-		prune[i] = {}
-	end
-
-	for i = 1, numNodes do
-		local x1, y1 = floor(nodes[i] / 10000) / 10000, (nodes[i] % 10000) / 10000
-		local u = i*numNodes-i
-		weight[u] = 0
-		for j = i+1, numNodes do
-			local x2, y2 = floor(nodes[j] / 10000) / 10000, (nodes[j] % 10000) / 10000
-			local u, v = i*numNodes-j, j*numNodes-i
-			weight[u] = ((x2 - x1)^2 + (y2 - y1)^2)^0.5 -- Calc distance between each node pair
-			weight[v] = weight[u]
-			--if weight[u] < 0.4 then
-				tinsert(prune[i], j)
-				tinsert(prune[j], i)
-			--end
-		end
-		path[i] = i
-	end
-
-	while TSP:TwoOpt(path, weight, prune, false, false) > 0 do end
-
-	local newpath = {}
-	for i = 1, numNodes do
-		newpath[i] = nodes[ path[i] ]
-	end
-
-	return newpath]]
 
 	return nodes
 end
-
 -- vim: ts=4 noexpandtab
