@@ -18,6 +18,10 @@ if not os.path.isfile(tocpath):
     print('VERIFY FAILED: Routes.toc not found in', addon)
     sys.exit(1)
 toc = open(tocpath, encoding='utf-8-sig').read()
+interface = re.search(r'^## Interface:\s*(.+)$', toc, flags=re.M)
+interfaces = set(re.findall(r'\d+', interface.group(1))) if interface else set()
+if '16001' not in interfaces:
+    errors.append('TOC does not declare WoW Forever beta interface 16001')
 for raw in toc.splitlines():
     line = raw.strip()
     if not line or line.startswith('#'):
